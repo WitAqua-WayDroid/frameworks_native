@@ -646,7 +646,10 @@ void getNativePixelFormat(EGLDisplay dpy, egl_connection_t* cnx, EGLConfig confi
                 *format = PixelFormat::RGBA_14141414_UINT;
             } else if (colorDepth > 24) {
                 *format = PixelFormat::RGBA_1010102;
+            } else if (cnx->egl.eglGetConfigAttrib(dpy, config, EGL_NATIVE_VISUAL_ID, &colorDepth)) {
+                *format = PixelFormat(colorDepth);
             } else {
+                ALOGE("eglGetConfigAttrib(EGL_NATIVE_VISUAL_ID) failed: %#x", eglGetError());
                 *format = PixelFormat::RGBA_8888;
             }
         } else {
