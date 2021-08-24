@@ -490,7 +490,8 @@ void OutputLayer::writeStateToHWC(bool includeGeometry, bool skipLayer, uint32_t
             state.overrideInfo.buffer != nullptr || isPeekingThrough || zIsOverridden;
     const bool prevOverridden = state.hwc->stateOverridden;
     if (isOverridden || prevOverridden || skipLayer || includeGeometry) {
-        writeOutputDependentGeometryStateToHWC(hwcLayer.get(), requestedCompositionType, z);
+        writeOutputDependentGeometryStateToHWC(hwcLayer.get(), requestedCompositionType, z,
+                                               outputIndependentState->buffer);
         writeOutputIndependentGeometryStateToHWC(hwcLayer.get(), *outputIndependentState,
                                                  skipLayer);
     }
@@ -524,7 +525,7 @@ void OutputLayer::writeStateToHWC(bool includeGeometry, bool skipLayer, uint32_t
 
 void OutputLayer::writeOutputDependentGeometryStateToHWC(HWC2::Layer* hwcLayer,
                                                          Composition requestedCompositionType,
-                                                         uint32_t z) {
+                                                         uint32_t z, const sp<GraphicBuffer>& buffer) {
     const auto& outputDependentState = getState();
 
     Rect displayFrame = outputDependentState.displayFrame;
@@ -571,6 +572,17 @@ void OutputLayer::writeOutputDependentGeometryStateToHWC(HWC2::Layer* hwcLayer,
     if (auto error = hwcLayer->setZOrder(z_udfps); error != hal::Error::NONE) {
         ALOGE("[%s] Failed to set Z %u: %s (%d)", getLayerFE().getDebugName(), z,
               to_string(error).c_str(), static_cast<int32_t>(error));
+    }
+
+    if (auto error = hwcLayer->setLayerHandleInfo(buffer); error != hal::Error::NONE) {
+        ALOGE("[%s] Failed to set layer buffer info: %s (%d)", getLayerFE().getDebugName(),
+              to_string(error).c_str(), static_cast<int32_t>(error));
+    }
+
+    if (auto error = hwcLayer->setLayerName(getLayerFE().getDebugName());
+            error != hal::Error::NONE) {
+            ALOGE("[%s] Failed to set layer name: %s (%d)", getLayerFE().getDebugName(),
+                  to_string(error).c_str(), static_cast<int32_t>(error));
     }
 
     // Solid-color layers and overridden buffers should always use an identity transform.

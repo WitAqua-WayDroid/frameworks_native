@@ -169,6 +169,10 @@ public:
                                 const std::vector<IComposerClient::Rect>& visible) override;
     Error setLayerZOrder(Display display, Layer layer, uint32_t z) override;
 
+    // WaydroidDisplay HAL 1.0
+    Error setLayerName(Display, Layer, std::string) override { return Error::NONE; }
+    Error setLayerHandleInfo(Display, Layer, const sp<GraphicBuffer>&) override { return Error::NONE; }
+
     // Composer HAL 2.2
     Error setLayerPerFrameMetadata(
             Display display, Layer layer,

@@ -93,6 +93,9 @@ cc_defaults {
         "libsync",
         "libui",
         "libutils",
+        "vendor.waydroid.display@1.0",
+        "vendor.waydroid.display@1.1",
+        "vendor.waydroid.display@1.2",
     ],
     static_libs: [
         "iinputflinger_aidl_lib_static",
@@ -134,6 +137,9 @@ cc_defaults {
         "android.hardware.graphics.composer@2.4",
         "libhidlbase",
         "libpowermanager",
+        "vendor.waydroid.display@1.0",
+        "vendor.waydroid.display@1.1",
+        "vendor.waydroid.display@1.2",
     ],
     // TODO (marissaw): this library is not used by surfaceflinger. This is here so
     // the library compiled in a way that is accessible to system partition when running
