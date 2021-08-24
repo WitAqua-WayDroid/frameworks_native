@@ -84,7 +84,8 @@ protected:
 private:
     Rect calculateInitialCrop() const;
     void writeOutputDependentGeometryStateToHWC(
-            HWC2::Layer*, aidl::android::hardware::graphics::composer3::Composition, uint32_t z);
+            HWC2::Layer*, aidl::android::hardware::graphics::composer3::Composition, uint32_t z,
+            const sp<GraphicBuffer>&);
     void writeOutputIndependentGeometryStateToHWC(HWC2::Layer*, const LayerFECompositionState&,
                                                   bool skipLayer);
     void writeOutputDependentPerFrameStateToHWC(HWC2::Layer*);

@@ -396,6 +396,10 @@ public:
     // Composer HAL 2.3
     [[nodiscard]] virtual hal::Error setColorTransform(const android::mat4& matrix) = 0;
 
+    // WaydroidDisplay HAL 1.0
+    [[nodiscard]] virtual hal::Error setLayerName(std::string name) = 0;
+    [[nodiscard]] virtual hal::Error setLayerHandleInfo(const sp<GraphicBuffer>& buffer) = 0;
+
     // Composer HAL 2.4
     [[nodiscard]] virtual hal::Error setLayerGenericMetadata(const std::string& name,
                                                              bool mandatory,
@@ -450,6 +454,10 @@ public:
 
     // Composer HAL 2.3
     hal::Error setColorTransform(const android::mat4& matrix) override;
+
+    // WaydroidDisplay HAL 1.0
+    hal::Error setLayerName(std::string name) override;
+    hal::Error setLayerHandleInfo(const sp<GraphicBuffer>& buffer) override;
 
     // Composer HAL 2.4
     hal::Error setLayerGenericMetadata(const std::string& name, bool mandatory,

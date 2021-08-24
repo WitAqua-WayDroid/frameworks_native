@@ -221,6 +221,10 @@ HidlComposer::HidlComposer(const std::string& serviceName)
       : mClearSlotBuffer(allocateClearSlotBuffer()), mWriter(kWriterInitialSize) {
     mComposer = V2_1::IComposer::getService(serviceName);
 
+    mWaydroidDisplay = V1_0::IWaydroidDisplay::getService();
+    mWaydroidDisplay_1 = V1_1::IWaydroidDisplay::castFrom(mWaydroidDisplay);
+    mWaydroidDisplay_2 = V1_2::IWaydroidDisplay::castFrom(mWaydroidDisplay);
+
     if (mComposer == nullptr) {
         LOG_ALWAYS_FATAL("failed to get hwcomposer service");
     }
@@ -389,6 +393,7 @@ Error HidlComposer::createLayer(Display display, Layer* outLayer) {
 }
 
 Error HidlComposer::destroyLayer(Display display, Layer layer) {
+    mLayersZMap.erase(layer);
     auto ret = mClient->destroyLayer(display, layer);
     return static_cast<Error>(unwrapRet(ret));
 }
@@ -625,6 +630,10 @@ Error HidlComposer::setClientTarget(Display display, uint32_t slot, const sp<Gra
 
     const native_handle_t* handle = nullptr;
     if (target.get()) {
+        if (mWaydroidDisplay)
+            mWaydroidDisplay->setTargetLayerHandleInfo(target->getPixelFormat(), target->getStride());
+        if (mWaydroidDisplay_1)
+            mWaydroidDisplay_1->setTargetLayerSize(target->getWidth(), target->getHeight());
         handle = target->getNativeBuffer()->handle;
     }
 
@@ -895,6 +904,7 @@ Error HidlComposer::setLayerZOrder(Display display, Layer layer, uint32_t z) {
     mWriter.selectDisplay(display);
     mWriter.selectLayer(layer);
     mWriter.setLayerZOrder(z);
+    mLayersZMap[layer] = z;
     return Error::NONE;
 }
 
@@ -1352,6 +1362,15 @@ V2_4::Error HidlComposer::setLayerGenericMetadata(Display display, Layer layer,
                                                   const std::vector<uint8_t>& value) {
     using Error = V2_4::Error;
     if (!mClient_2_4) {
+        if (mWaydroidDisplay_2 && key == "org.chromium.arc.V1_0.CursorInfo") {
+            Parcel p;
+            p.setData(value.data(), value.size());
+            int32_t cursorStyle = p.readInt32();
+            float cursorHotspotX = p.readFloat();
+            float cursorHotspotY = p.readFloat();
+            mWaydroidDisplay_2->setMouseMetadata(layer, cursorStyle, cursorHotspotX, cursorHotspotY);
+            return Error::NONE;
+        }
         return Error::UNSUPPORTED;
     }
     mWriter.selectDisplay(display);
@@ -1364,6 +1383,10 @@ V2_4::Error HidlComposer::getLayerGenericMetadataKeys(
         std::vector<IComposerClient::LayerGenericMetadataKey>* outKeys) {
     using Error = V2_4::Error;
     if (!mClient_2_4) {
+        if (mWaydroidDisplay_2) {
+            *outKeys = {{"org.chromium.arc.V1_0.CursorInfo", true}};
+            return Error::NONE;
+        }
         return Error::UNSUPPORTED;
     }
     Error error = kDefaultError_2_4;
@@ -1499,6 +1522,40 @@ void HidlComposer::registerCallback(ComposerCallback& callback) {
 
 void HidlComposer::onHotplugConnect(Display) {}
 void HidlComposer::onHotplugDisconnect(Display) {}
+
+Error HidlComposer::setLayerName(Display, Layer layer, std::string name) {
+    if (!mWaydroidDisplay) {
+        return Error::UNSUPPORTED;
+    }
+    if (mLayersNameMap[mLayersZMap[layer]] != name) {
+        mLayersNameMap[mLayersZMap[layer]] = name;
+        auto ret = mWaydroidDisplay->setLayerName(mLayersZMap[layer], name);
+        return static_cast<Error>(unwrapRet(ret));
+    } else
+        return Error::NONE;
+}
+
+Error HidlComposer::setLayerHandleInfo(Display, Layer layer, const sp<GraphicBuffer>& buffer) {
+    Error error;
+    if (!mWaydroidDisplay)
+        return Error::UNSUPPORTED;
+
+    if (buffer.get() &&
+            mLayersHandleMap[mLayersZMap[layer]] != buffer->getNativeBuffer()->handle) {
+        mLayersHandleMap[mLayersZMap[layer]] = buffer->getNativeBuffer()->handle;
+        auto ret = mWaydroidDisplay->setLayerHandleInfo(mLayersZMap[layer],
+                                                        buffer->getPixelFormat(),
+                                                        buffer->getStride());
+        error = static_cast<Error>(unwrapRet(ret));
+        if (error != Error::NONE)
+            return error;
+
+        if (mWaydroidDisplay_1)
+            mWaydroidDisplay_1->setLayerSize(mLayersZMap[layer],
+                                            buffer->getWidth(), buffer->getHeight());
+    }
+    return Error::NONE;
+}
 
 CommandReader::~CommandReader() {
     resetData();

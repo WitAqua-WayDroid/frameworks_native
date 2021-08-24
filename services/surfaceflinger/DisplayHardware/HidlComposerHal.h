@@ -28,6 +28,7 @@
 #pragma clang diagnostic ignored "-Wconversion"
 #pragma clang diagnostic ignored "-Wextra"
 
+#include <vendor/waydroid/display/1.2/IWaydroidDisplay.h>
 #include <composer-command-buffer/2.4/ComposerCommandBuffer.h>
 #include <gui/BufferQueue.h>
 #include <gui/HdrMetadata.h>
@@ -45,6 +46,7 @@
 namespace android::Hwc2 {
 
 namespace types = hardware::graphics::common;
+using namespace vendor::waydroid::display;
 
 namespace V2_1 = hardware::graphics::composer::V2_1;
 namespace V2_2 = hardware::graphics::composer::V2_2;
@@ -276,6 +278,10 @@ public:
                                 const std::vector<IComposerClient::Rect>& visible) override;
     Error setLayerZOrder(Display display, Layer layer, uint32_t z) override;
 
+    // WaydroidDisplay HAL 1.0
+    Error setLayerName(Display display, Layer layer, std::string name) override;
+    Error setLayerHandleInfo(Display display, Layer layer, const sp<GraphicBuffer>& buffer) override;
+
     // Composer HAL 2.2
     Error setLayerPerFrameMetadata(
             Display display, Layer layer,
@@ -396,6 +402,13 @@ private:
 
     // Buffer slots for layers are cleared by setting the slot buffer to this buffer.
     sp<GraphicBuffer> mClearSlotBuffer;
+
+    sp<V1_0::IWaydroidDisplay> mWaydroidDisplay;
+    sp<V1_1::IWaydroidDisplay> mWaydroidDisplay_1;
+    sp<V1_2::IWaydroidDisplay> mWaydroidDisplay_2;
+    std::map<Layer, int32_t> mLayersZMap;
+    std::map<int32_t, std::string> mLayersNameMap;
+    std::map<int32_t, const native_handle_t*> mLayersHandleMap;
 
     // 64KiB minus a small space for metadata such as read/write pointers
     static constexpr size_t kWriterInitialSize = 64 * 1024 / sizeof(uint32_t) - 16;
