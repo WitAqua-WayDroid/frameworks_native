@@ -156,6 +156,9 @@ cc_defaults {
         "libtracing_perfetto",
         "libui",
         "libutils",
+        "vendor.waydroid.display@1.0",
+        "vendor.waydroid.display@1.1",
+        "vendor.waydroid.display@1.2",
     ],
     header_libs: [
         "android.hardware.graphics.composer3-command-buffer-V5",
