@@ -263,6 +263,10 @@ public:
     virtual Error setDisplayBrightness(Display display, float brightness, float brightnessNits,
                                        const DisplayBrightnessOptions& options) = 0;
 
+    // WaydroidDisplay HAL 1.0
+    virtual Error setLayerName(Display display, Layer layer, std::string name) = 0;
+    virtual Error setLayerHandleInfo(Display display, Layer layer, const sp<GraphicBuffer>& buffer) = 0;
+
     // Composer HAL 2.4
     virtual Error getDisplayCapabilities(
             Display display, std::vector<composer3::DisplayCapability>* outCapabilities) = 0;
