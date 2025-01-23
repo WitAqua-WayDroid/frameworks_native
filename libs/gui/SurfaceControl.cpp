@@ -139,7 +139,7 @@ sp<Surface> SurfaceControl::generateSurfaceLocked()
     uint32_t ignore;
     auto flags = mCreateFlags & (ISurfaceComposerClient::eCursorWindow |
                                  ISurfaceComposerClient::eOpaque);
-    mBbqChild = mClient->createSurface(String8::format("[BBQ] %s", mName.c_str()), 0, 0, mFormat,
+    mBbqChild = mClient->createSurface(flags & ISurfaceComposerClient::eCursorWindow ? String8("Sprite") : String8::format("[BBQ] %s", mName.c_str()), 0, 0, mFormat,
                                        flags, mHandle, {}, &ignore);
     mBbq = sp<BLASTBufferQueue>::make("[BBQ] " + mName, /* updateDestinationFrame */ true);
     mBbq->update(mBbqChild, mWidth, mHeight, mFormat);
