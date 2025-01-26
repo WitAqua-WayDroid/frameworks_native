@@ -715,7 +715,7 @@ void Output::ensureOutputLayerIfVisible(sp<compositionengine::LayerFE>& layerFE,
     // subtract the opaque region covered by the layers above us
     visibleRegion.subtractSelf(coverage.aboveOpaqueLayers);
 
-    if (visibleRegion.isEmpty()) {
+    if (visibleRegion.isEmpty() && !mWaydroidMultiWindows) {
         return;
     }
 
@@ -774,7 +774,7 @@ void Output::ensureOutputLayerIfVisible(sp<compositionengine::LayerFE>& layerFE,
     const auto& outputState = getState();
     Region drawRegion(outputState.transform.transform(visibleNonTransparentRegion));
     drawRegion.andSelf(outputState.displaySpace.getBoundsAsRect());
-    if (drawRegion.isEmpty()) {
+    if (drawRegion.isEmpty() && !mWaydroidMultiWindows) {
         return;
     }
 
