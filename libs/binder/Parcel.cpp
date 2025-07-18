@@ -319,9 +319,10 @@ status_t Parcel::flattenBinder(const sp<IBinder>& binder) {
                 schedBits = schedPolicyMask(policy, priority);
             }
             obj.flags = FLAT_BINDER_FLAG_ACCEPTS_FDS;
-            if (local->isRequestingSid()) {
+            // Disabled for Halium
+            /*if (local->isRequestingSid()) {
                 obj.flags |= FLAT_BINDER_FLAG_TXN_SECURITY_CTX;
-            }
+            }*/
             if (local->isInheritRt()) {
                 obj.flags |= FLAT_BINDER_FLAG_INHERIT_RT;
             }
