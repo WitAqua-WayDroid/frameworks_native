@@ -344,6 +344,7 @@ cc_defaults {
     },
 
     shared_libs: [
+        "libbase",
         "libcutils",
         "liblog",
         "libutils",
