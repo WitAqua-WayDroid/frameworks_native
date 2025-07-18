@@ -432,6 +432,13 @@ public:
 
     /**
      * Sets the given bit in the bit array to the given value.
+    /** Sets the given bit in the bit array. */
+    inline void set(size_t bit) {
+        if (bit < BITS) {
+            mData.set(bit);
+        }
+    }
+
      * Returns true if the given bit is a valid index and thus was set successfully.
      */
     inline bool set(size_t bit, bool value) {
