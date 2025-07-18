@@ -430,6 +430,11 @@ public:
     /** Returns the value of the bit at the given index, which should be 0 <= bit < BITS. */
     inline bool test(size_t bit) const { return bit < BITS && mData.test(bit); }
 
+    inline void set(size_t bit) {
+        if (bit >= BITS) return;
+        mData.set(bit);
+    }
+
     /**
      * Sets the given bit in the bit array to the given value.
      * Returns true if the given bit is a valid index and thus was set successfully.
