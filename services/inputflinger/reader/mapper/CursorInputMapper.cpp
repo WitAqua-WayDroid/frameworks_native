@@ -94,6 +94,39 @@ void CursorMotionAccumulator::finishSync() {
     clearRelativeAxes();
 }
 
+// --- CursorPositionAccumulator ---
+
+CursorPositionAccumulator::CursorPositionAccumulator() {
+    clearPosition();
+}
+
+void CursorPositionAccumulator::reset(InputDeviceContext& deviceContext) {
+    clearPosition();
+}
+
+void CursorPositionAccumulator::clearPosition() {
+    mX = 0;
+    mY = 0;
+}
+
+void CursorPositionAccumulator::process(const RawEvent& rawEvent) {
+    if (rawEvent.type == EV_ABS) {
+        switch (rawEvent.code) {
+        case ABS_X:
+            mX = rawEvent.value;
+            break;
+        case ABS_Y:
+            mY = rawEvent.value;
+            break;
+        }
+    }
+}
+
+void CursorPositionAccumulator::finishSync() {
+    clearPosition();
+}
+
+
 // --- CursorInputMapper ---
 
 CursorInputMapper::CursorInputMapper(InputDeviceContext& deviceContext,
@@ -215,6 +248,8 @@ CursorInputMapper::Parameters CursorInputMapper::computeParameters(
     if (parameters.mode == Parameters::Mode::POINTER || parameters.orientationAware) {
         parameters.hasAssociatedDisplay = true;
     }
+
+    parameters.isWayland = (deviceContext.getDeviceIdentifier().location == "wayland");
     return parameters;
 }
 
@@ -237,6 +272,7 @@ std::list<NotifyArgs> CursorInputMapper::reset(nsecs_t when) {
 
     mCursorButtonAccumulator.reset(getDeviceContext());
     mCursorMotionAccumulator.reset(getDeviceContext());
+    mCursorPositionAccumulator.reset(getDeviceContext());
     mCursorScrollAccumulator.reset(getDeviceContext());
 
     return InputMapper::reset(when);
@@ -246,6 +282,7 @@ std::list<NotifyArgs> CursorInputMapper::process(const RawEvent& rawEvent) {
     std::list<NotifyArgs> out;
     mCursorButtonAccumulator.process(rawEvent);
     mCursorMotionAccumulator.process(rawEvent);
+    mCursorPositionAccumulator.process(rawEvent);
     mCursorScrollAccumulator.process(rawEvent);
 
     if (rawEvent.type == EV_SYN && rawEvent.code == SYN_REPORT) {
@@ -313,8 +350,8 @@ std::list<NotifyArgs> CursorInputMapper::sync(nsecs_t when, nsecs_t readTime) {
 
     mPointerVelocityControl.move(when, &deltaX, &deltaY);
 
-    float xCursorPosition = AMOTION_EVENT_INVALID_CURSOR_POSITION;
-    float yCursorPosition = AMOTION_EVENT_INVALID_CURSOR_POSITION;
+    float xCursorPosition = mParameters.isWayland ? mCursorPositionAccumulator.getX() : AMOTION_EVENT_INVALID_CURSOR_POSITION;
+    float yCursorPosition = mParameters.isWayland ? mCursorPositionAccumulator.getY() : AMOTION_EVENT_INVALID_CURSOR_POSITION;
 
     // Moving an external trackball or mouse should wake the device.
     // We don't do this for internal cursor devices to prevent them from waking up
@@ -339,7 +376,10 @@ std::list<NotifyArgs> CursorInputMapper::sync(nsecs_t when, nsecs_t readTime) {
         moveCoords.clear();
         moveCoords.setAxisValue(AMOTION_EVENT_AXIS_RELATIVE_X, deltaX);
         moveCoords.setAxisValue(AMOTION_EVENT_AXIS_RELATIVE_Y, deltaY);
-        if (mSource != AINPUT_SOURCE_MOUSE) {
+        if (mParameters.isWayland) {
+            moveCoords.setAxisValue(AMOTION_EVENT_AXIS_X, xCursorPosition);
+            moveCoords.setAxisValue(AMOTION_EVENT_AXIS_Y, yCursorPosition);
+        } else if (mSource != AINPUT_SOURCE_MOUSE) {
             // Pointer capture and navigation modes
             moveCoords.setAxisValue(AMOTION_EVENT_AXIS_X, deltaX);
             moveCoords.setAxisValue(AMOTION_EVENT_AXIS_Y, deltaY);
@@ -367,6 +407,11 @@ std::list<NotifyArgs> CursorInputMapper::sync(nsecs_t when, nsecs_t readTime) {
         PointerCoords pointerCoords;
         pointerCoords.clear();
         pointerCoords.setAxisValue(AMOTION_EVENT_AXIS_PRESSURE, down ? 1.0f : 0.0f);
+
+        if (mParameters.isWayland) {
+            pointerCoords.setAxisValue(AMOTION_EVENT_AXIS_X, xCursorPosition);
+            pointerCoords.setAxisValue(AMOTION_EVENT_AXIS_Y, yCursorPosition);
+        }
 
         if (buttonsReleased) {
             BitSet32 released(buttonsReleased);
