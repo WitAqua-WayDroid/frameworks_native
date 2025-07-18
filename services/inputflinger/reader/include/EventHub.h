@@ -431,6 +431,9 @@ public:
     inline bool test(size_t bit) const {
         return (bit < BITS) && mData[bit / WIDTH].test(bit % WIDTH);
     }
+    inline void set(size_t bit) {
+        mData[bit / WIDTH].set(bit % WIDTH);
+    }
     /* Sets the given bit in the bit array to given value.
      * Returns true if the given bit is a valid index and thus was set successfully.
      */
