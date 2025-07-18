@@ -539,9 +539,14 @@ private:
  * if the label of that top-level file actually changed.  This can save us
  * significant time by avoiding no-op traversals of large filesystem trees.
  */
-static int restorecon_app_data_lazy(const std::string& path, const std::string& seInfo, uid_t uid,
-        bool existing) {
-    ScopedTrace tracer("restorecon-lazy");
+static int restorecon_app_data_lazy(const std::string& /*path*/, const std::string& /*seInfo*/, uid_t /*uid*/,
+        bool /*existing*/) {
+    int res = 0;
+
+    // Disabled for Waydroid
+    return res;
+
+    /*ScopedTrace tracer("restorecon-lazy");
     if (!existing) {
         ScopedTrace tracer("new-path");
         if (selinux_android_restorecon_pkgdir(path.c_str(), seInfo.c_str(), uid,
@@ -605,7 +610,7 @@ static int restorecon_app_data_lazy(const std::string& path, const std::string& 
         }
     }
 
-    return 0;
+    return 0;*/
 }
 static bool internal_storage_has_project_id() {
     // The following path is populated in setFirstBoot, so if this file is present
@@ -669,10 +674,10 @@ static bool prepare_app_profile_dir(const std::string& packageName, int32_t appI
         PLOG(ERROR) << "Failed to prepare " << profile_dir;
         return false;
     }
-    if (selinux_android_restorecon(profile_dir.c_str(), 0)) {
+    /*if (selinux_android_restorecon(profile_dir.c_str(), 0)) {
         PLOG(ERROR) << "Failed to restorecon " << profile_dir;
         return false;
-    }
+    }*/
 
     const std::string ref_profile_path =
             create_primary_reference_profile_package_dir_path(packageName);
@@ -2217,10 +2222,11 @@ binder::Status InstalldNativeService::moveCompleteApp(const std::optional<std::s
             goto fail;
         }
 
-        if (selinux_android_restorecon(to_app_package_path.c_str(), SELINUX_ANDROID_RESTORECON_RECURSE) != 0) {
+        // Disabled for Waydroid
+        /*if (selinux_android_restorecon(to_app_package_path.c_str(), SELINUX_ANDROID_RESTORECON_RECURSE) != 0) {
             res = error("Failed to restorecon " + to_app_package_path);
             goto fail;
-        }
+        }*/
     }
 
     // Copy private data for all known users
@@ -3736,10 +3742,11 @@ binder::Status InstalldNativeService::linkNativeLibraryDirectory(
         return error("Failed to stat " + _pkgdir);
     }
 
-    char *con = nullptr;
+    // Disabled for Waydroid
+    /*char *con = nullptr;
     if (::lgetfilecon(pkgdir, &con) < 0) {
         return error("Failed to lgetfilecon " + _pkgdir);
-    }
+    }*/
 
     if (chown(pkgdir, AID_INSTALL, AID_INSTALL) < 0) {
         res = error("Failed to chown " + _pkgdir);
@@ -3775,13 +3782,14 @@ binder::Status InstalldNativeService::linkNativeLibraryDirectory(
         goto out;
     }
 
-    if (lsetfilecon(libsymlink, con) < 0) {
+    // Disabled for Waydroid
+    /*if (lsetfilecon(libsymlink, con) < 0) {
         res = error("Failed to lsetfilecon " + _libsymlink);
         goto out;
-    }
+    }*/
 
 out:
-    free(con);
+    //free(con);
     if (chmod(pkgdir, s.st_mode) < 0) {
         auto msg = "Failed to cleanup chmod " + _pkgdir;
         if (res.isOk()) {
@@ -3816,7 +3824,7 @@ binder::Status InstalldNativeService::restoreconAppData(const std::optional<std:
 
 binder::Status InstalldNativeService::restoreconAppDataLocked(
         const std::optional<std::string>& uuid, const std::string& packageName, int32_t userId,
-        int32_t flags, int32_t appId, const std::string& seInfo) {
+        int32_t /*flags*/, int32_t /*appId*/, const std::string& /*seInfo*/) {
     ENFORCE_UID(AID_SYSTEM);
     ENFORCE_VALID_USER(userId);
     CHECK_ARGUMENT_UUID(uuid);
@@ -3825,7 +3833,7 @@ binder::Status InstalldNativeService::restoreconAppDataLocked(
     binder::Status res = ok();
 
     // SELINUX_ANDROID_RESTORECON_DATADATA flag is set by libselinux. Not needed here.
-    unsigned int seflags = SELINUX_ANDROID_RESTORECON_RECURSE;
+    /*unsigned int seflags = SELINUX_ANDROID_RESTORECON_RECURSE;
     const char* uuid_ = uuid ? uuid->c_str() : nullptr;
     const char* pkgName = packageName.c_str();
     const char* seinfo = seInfo.c_str();
@@ -3842,13 +3850,13 @@ binder::Status InstalldNativeService::restoreconAppDataLocked(
         if (selinux_android_restorecon_pkgdir(path.c_str(), seinfo, uid, seflags) < 0) {
             res = error("restorecon failed for " + path);
         }
-    }
+    }*/
     return res;
 }
 
 binder::Status InstalldNativeService::restoreconSdkDataLocked(
         const std::optional<std::string>& uuid, const std::string& packageName, int32_t userId,
-        int32_t flags, int32_t appId, const std::string& seInfo) {
+        int32_t /*flags*/, int32_t /*appId*/, const std::string& /*seInfo*/) {
     ENFORCE_UID(AID_SYSTEM);
     ENFORCE_VALID_USER(userId);
     CHECK_ARGUMENT_UUID(uuid);
@@ -3857,7 +3865,7 @@ binder::Status InstalldNativeService::restoreconSdkDataLocked(
     binder::Status res = ok();
 
     // SELINUX_ANDROID_RESTORECON_DATADATA flag is set by libselinux. Not needed here.
-    unsigned int seflags = SELINUX_ANDROID_RESTORECON_RECURSE;
+    /*unsigned int seflags = SELINUX_ANDROID_RESTORECON_RECURSE;
     const char* uuid_ = uuid ? uuid->c_str() : nullptr;
     const char* pkgName = packageName.c_str();
     const char* seinfo = seInfo.c_str();
@@ -3877,7 +3885,7 @@ binder::Status InstalldNativeService::restoreconSdkDataLocked(
         }
         const auto subDirHandler = [&packagePath, &seinfo, &uid, &seflags,
                                     &res](const std::string& subDir) {
-            const auto& fullpath = packagePath + "/" + subDir;
+            (const auto& fullpath = packagePath + "/" + subDir;
             if (selinux_android_restorecon_pkgdir(fullpath.c_str(), seinfo, uid, seflags) < 0) {
                 res = error("restorecon failed for " + fullpath);
             }
@@ -3886,7 +3894,7 @@ binder::Status InstalldNativeService::restoreconSdkDataLocked(
         if (ec != 0) {
             res = error("Failed to restorecon for subdirs of " + packagePath);
         }
-    }
+    }*/
     return res;
 }
 
@@ -4038,9 +4046,10 @@ binder::Status InstalldNativeService::createOatDirs(const std::string& packageNa
     if (fs_prepare_dir(oat_dir, S_IRWXU | S_IRWXG | S_IXOTH, AID_SYSTEM, AID_INSTALL)) {
         return error("Failed to prepare " + oatDir);
     }
-    if (selinux_android_restorecon(oat_dir, 0)) {
+    // Disabled for Waydroid
+    /*if (selinux_android_restorecon(oat_dir, 0)) {
         return error("Failed to restorecon " + oatDir);
-    }
+    }*/
     for (const std::string& sub_dir : oatSubDirs) {
         // Create the given sub-directory as well as any nonexistent parent directories.
         std::filesystem::path current_path(oat_dir);
