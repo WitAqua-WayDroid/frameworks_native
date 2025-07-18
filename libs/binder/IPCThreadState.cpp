@@ -35,6 +35,7 @@
 #include <chrono>
 #endif // PCC_LOGGING
 
+#include <android-base/properties.h>
 #include <utils/CallStack.h>
 #include <utils/SystemClock.h>
 
@@ -448,6 +449,11 @@ status_t IPCThreadState::clearLastError()
 pid_t IPCThreadState::getCallingPid() const
 {
     checkContextIsBinderForUse(__func__);
+    if (mCallingUid != 1000) {
+        int hostuid = android::base::GetIntProperty("waydroid.host.uid", 1000);
+        if (mCallingUid == (uid_t)hostuid)
+            return 1000;
+    }
     return mCallingPid;
 }
 
