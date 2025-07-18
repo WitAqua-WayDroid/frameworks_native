@@ -1785,7 +1785,7 @@ static std::string format_dexopt_error(int status, const char* dex_path) {
 
 int dexopt(const char* dex_path, uid_t uid, const char* pkgname, const char* instruction_set,
         int dexopt_needed, const char* oat_dir, int dexopt_flags, const char* compiler_filter,
-        const char* volume_uuid, const char* class_loader_context, const char* se_info,
+        const char* volume_uuid, const char* class_loader_context, const char* /*se_info*/,
         bool downgrade, int target_sdk_version, const char* profile_name,
         const char* dex_metadata_path, const char* compilation_reason, std::string* error_msg,
         /* out */ bool* completed) {
@@ -1902,12 +1902,13 @@ int dexopt(const char* dex_path, uid_t uid, const char* pkgname, const char* ins
     // Note that for primary apk the oat files are created before, in a separate installd
     // call which also does the restorecon. TODO(calin): unify the paths.
     if (is_secondary_dex) {
-        if (selinux_android_restorecon_pkgdir(oat_dir, se_info, uid,
+        // Disabled for Waydroid
+        /*if (selinux_android_restorecon_pkgdir(oat_dir, se_info, uid,
                 SELINUX_ANDROID_RESTORECON_RECURSE)) {
             *error_msg = std::string("Failed to restorecon ").append(oat_dir);
             LOG(ERROR) << *error_msg;
             return -1;
-        }
+        }*/
     }
 
     // Create a swap file if necessary.

@@ -32,6 +32,7 @@ cc_defaults {
         "-Wunreachable-code",
         "-Wunreachable-code-break",
         "-Wunreachable-code-return",
+        "-Wno-unused-function",
     ],
     srcs: [
         "CacheItem.cpp",
