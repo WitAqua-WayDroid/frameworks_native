@@ -370,28 +370,39 @@ static pthread_mutex_t gTLSMutex = PTHREAD_MUTEX_INITIALIZER;
 LIBBINDER_IGNORE_END()
 static std::atomic<bool> gHaveTLS(false);
 static pthread_key_t gTLS = 0;
+// Waydroid dual-driver: parallel host-side TLS slot.
+static std::atomic<bool> gHostHaveTLS(false);
+static pthread_key_t gHostTLS = 0;
 static std::atomic<bool> gDisableBackgroundScheduling = false;
 
 IPCThreadState* IPCThreadState::self()
 {
-    if (gHaveTLS.load(std::memory_order_acquire)) {
+    return self(false);
+}
+
+IPCThreadState* IPCThreadState::self(bool isHost)
+{
+    std::atomic<bool>& haveTLS = isHost ? gHostHaveTLS : gHaveTLS;
+    pthread_key_t& tlsKey = isHost ? gHostTLS : gTLS;
+
+    if (haveTLS.load(std::memory_order_acquire)) {
 restart:
-        const pthread_key_t k = gTLS;
+        const pthread_key_t k = tlsKey;
         IPCThreadState* st = (IPCThreadState*)pthread_getspecific(k);
         if (st) return st;
-        return new IPCThreadState;
+        return new IPCThreadState(isHost);
     }
 
     pthread_mutex_lock(&gTLSMutex);
-    if (!gHaveTLS.load(std::memory_order_relaxed)) {
-        int key_create_value = pthread_key_create(&gTLS, threadDestructor);
+    if (!haveTLS.load(std::memory_order_relaxed)) {
+        int key_create_value = pthread_key_create(&tlsKey, threadDestructor);
         if (key_create_value != 0) {
             pthread_mutex_unlock(&gTLSMutex);
             ALOGW("IPCThreadState::self() unable to create TLS key, expect a crash: %s\n",
                     strerror(key_create_value));
             return nullptr;
         }
-        gHaveTLS.store(true, std::memory_order_release);
+        haveTLS.store(true, std::memory_order_release);
     }
     pthread_mutex_unlock(&gTLSMutex);
     goto restart;
@@ -399,8 +410,15 @@ restart:
 
 IPCThreadState* IPCThreadState::selfOrNull()
 {
-    if (gHaveTLS.load(std::memory_order_acquire)) {
-        const pthread_key_t k = gTLS;
+    return selfOrNull(false);
+}
+
+IPCThreadState* IPCThreadState::selfOrNull(bool isHost)
+{
+    std::atomic<bool>& haveTLS = isHost ? gHostHaveTLS : gHaveTLS;
+    pthread_key_t& tlsKey = isHost ? gHostTLS : gTLS;
+    if (haveTLS.load(std::memory_order_acquire)) {
+        const pthread_key_t k = tlsKey;
         IPCThreadState* st = (IPCThreadState*)pthread_getspecific(k);
         return st;
     }
@@ -1053,6 +1071,14 @@ void IPCThreadState::expungeHandle(int32_t handle, IBinder* binder)
     self()->mProcess->expungeHandle(handle, binder); // NOLINT
 }
 
+void IPCThreadState::expungeHandle(int32_t handle, IBinder* binder, bool isHost)
+{
+#if LOG_REFCOUNTS
+    ALOGV("IPCThreadState::expungeHandle(%ld, isHost=%d)\n", handle, isHost);
+#endif
+    self(isHost)->mProcess->expungeHandle(handle, binder); // NOLINT
+}
+
 status_t IPCThreadState::requestDeathNotification(int32_t handle, BpBinder* proxy)
 {
     mOut.writeInt32(BC_REQUEST_DEATH_NOTIFICATION);
@@ -1130,8 +1156,8 @@ status_t IPCThreadState::removeFrozenStateChangeCallback(int32_t handle, BpBinde
     return NO_ERROR;
 }
 
-IPCThreadState::IPCThreadState()
-      : mProcess(ProcessState::self()),
+IPCThreadState::IPCThreadState(bool isHost)
+      : mProcess(ProcessState::self(isHost)),
         mServingStackPointer(nullptr),
         mServingStackPointerGuard(nullptr),
         mWorkSource(kUnsetWorkSource),
@@ -1141,8 +1167,9 @@ IPCThreadState::IPCThreadState()
         mIsProcessingPostWriteDerefs(false),
         mStrictModePolicy(0),
         mLastTransactionBinderFlags(0),
-        mCallRestriction(mProcess->mCallRestriction) {
-    pthread_setspecific(gTLS, this);
+        mCallRestriction(mProcess->mCallRestriction),
+        mIsHost(isHost) {
+    pthread_setspecific(mIsHost ? gHostTLS : gTLS, this);
     clearCaller();
     mHasExplicitIdentity = false;
     mIn.setDataCapacity(256);
@@ -1236,18 +1263,20 @@ status_t IPCThreadState::waitForResponse(Parcel *reply, status_t *acquireResult)
                             tr.data_size,
                             reinterpret_cast<const binder_size_t*>(tr.data.ptr.offsets),
                             tr.offsets_size/sizeof(binder_size_t),
-                            freeBuffer);
+                            freeBuffer, mIsHost);
                     } else {
                         err = *reinterpret_cast<const status_t*>(tr.data.ptr.buffer);
                         freeBuffer(reinterpret_cast<const uint8_t*>(tr.data.ptr.buffer),
                                    tr.data_size,
                                    reinterpret_cast<const binder_size_t*>(tr.data.ptr.offsets),
-                                   tr.offsets_size / sizeof(binder_size_t));
+                                   tr.offsets_size / sizeof(binder_size_t),
+                                   mIsHost);
                     }
                 } else {
                     freeBuffer(reinterpret_cast<const uint8_t*>(tr.data.ptr.buffer), tr.data_size,
                                reinterpret_cast<const binder_size_t*>(tr.data.ptr.offsets),
-                               tr.offsets_size / sizeof(binder_size_t));
+                               tr.offsets_size / sizeof(binder_size_t),
+                               mIsHost);
                     continue;
                 }
             }
@@ -1535,7 +1564,7 @@ status_t IPCThreadState::executeCommand(int32_t cmd)
                 reinterpret_cast<const uint8_t*>(tr.data.ptr.buffer),
                 tr.data_size,
                 reinterpret_cast<const binder_size_t*>(tr.data.ptr.offsets),
-                tr.offsets_size/sizeof(binder_size_t), freeBuffer);
+                tr.offsets_size/sizeof(binder_size_t), freeBuffer, mIsHost);
 
             const void* origServingStackPointer = mServingStackPointer;
             mServingStackPointer = __builtin_frame_address(0);
@@ -1811,7 +1840,8 @@ void IPCThreadState::logExtendedError() {
 }
 
 void IPCThreadState::freeBuffer(const uint8_t* data, size_t /*dataSize*/,
-                                const binder_size_t* /*objects*/, size_t /*objectsSize*/) {
+                                const binder_size_t* /*objects*/, size_t /*objectsSize*/,
+                                bool isHost) {
     //ALOGI("Freeing parcel %p", &parcel);
     IF_LOG_COMMANDS() {
         std::ostringstream logStream;
@@ -1820,7 +1850,7 @@ void IPCThreadState::freeBuffer(const uint8_t* data, size_t /*dataSize*/,
         ALOGI("%s", message.c_str());
     }
     ALOG_ASSERT(data != NULL, "Called with NULL data");
-    IPCThreadState* state = self();
+    IPCThreadState* state = self(isHost);
     state->mOut.writeInt32(BC_FREE_BUFFER);
     state->mOut.writePointer((uintptr_t)data);
     state->flushIfNeeded();

@@ -17,6 +17,8 @@
 #define LOG_TAG "libbinder.IInterface"
 #include <binder/IInterface.h>
 
+#include <binder/BpBinder.h>
+
 namespace android {
 
 // ---------------------------------------------------------------------------
@@ -40,6 +42,17 @@ sp<IBinder> IInterface::asBinder(const sp<IInterface>& iface)
 {
     if (iface == nullptr) return nullptr;
     return sp<IBinder>::fromExisting(iface->onAsBinder());
+}
+
+// static
+bool IInterface::isHostBinder(const IInterface* iface)
+{
+    if (iface == nullptr) return false;
+    IBinder* binder = const_cast<IInterface*>(iface)->onAsBinder();
+    if (binder == nullptr) return false;
+    BpBinder* proxy = binder->remoteBinder();
+    if (proxy == nullptr) return false;
+    return proxy->isHostBinder();
 }
 
 

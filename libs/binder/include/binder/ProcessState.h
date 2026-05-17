@@ -46,11 +46,15 @@ class BinderObserver;
 class ProcessState : public virtual RefBase {
 public:
     LIBBINDER_EXPORTED static sp<ProcessState> self();
+    LIBBINDER_EXPORTED static sp<ProcessState> self(bool isHost);
     // The behavior is the same as self() if kernel binder is enabled for this
     // process (can it reach the binder device node). If not, this returns null
     // and does not create a ProcessState object.
     LIBBINDER_EXPORTED static sp<ProcessState> selfIfKernelBinderEnabled();
     LIBBINDER_EXPORTED static sp<ProcessState> selfOrNull();
+    LIBBINDER_EXPORTED static sp<ProcessState> selfOrNull(bool isHost);
+
+    LIBBINDER_EXPORTED bool isHostBinder() const { return mIsHost; }
 
     LIBBINDER_EXPORTED static bool isVndservicemanagerEnabled();
 
@@ -149,7 +153,8 @@ public:
     LIBBINDER_EXPORTED static bool isDriverFeatureEnabled(const DriverFeature feature);
 
 private:
-    static sp<ProcessState> init(const char* defaultDriver, bool requireDefault);
+    static sp<ProcessState> init(const char* defaultDriver, bool requireDefault,
+                                 bool isHost = false);
 
     void checkExpectingThreadPoolStart() const;
 
@@ -160,7 +165,7 @@ private:
     friend class IPCThreadState;
     friend class sp<ProcessState>;
 
-    explicit ProcessState(const char* driver);
+    explicit ProcessState(const char* driver, bool isHost = false);
     ~ProcessState();
 
     ProcessState(const ProcessState& o);
@@ -205,6 +210,9 @@ private:
     std::atomic_int32_t mThreadPoolSeq;
 
     CallRestriction mCallRestriction;
+
+    // Waydroid dual-driver: marks this ProcessState as the host-binder singleton.
+    bool mIsHost;
 #ifdef BINDER_WITH_OBSERVERS
     std::unique_ptr<BinderObserver> mBinderObserver;
 #endif

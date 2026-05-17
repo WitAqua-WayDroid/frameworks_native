@@ -40,7 +40,9 @@ public:
     using CallRestriction = ProcessState::CallRestriction;
 
     LIBBINDER_EXPORTED static IPCThreadState* self();
+    LIBBINDER_EXPORTED static IPCThreadState* self(bool isHost);
     LIBBINDER_EXPORTED static IPCThreadState* selfOrNull(); // self(), but won't instantiate
+    LIBBINDER_EXPORTED static IPCThreadState* selfOrNull(bool isHost);
 
     // Freeze or unfreeze the binder interface to a specific process. When freezing, this method
     // will block up to timeout_ms to process pending transactions directed to pid. Unfreeze
@@ -177,6 +179,7 @@ public:
     LIBBINDER_EXPORTED void decWeakHandle(int32_t handle);
     LIBBINDER_EXPORTED status_t attemptIncStrongHandle(int32_t handle);
     LIBBINDER_EXPORTED static void expungeHandle(int32_t handle, IBinder* binder);
+    LIBBINDER_EXPORTED static void expungeHandle(int32_t handle, IBinder* binder, bool isHost);
     LIBBINDER_EXPORTED status_t requestDeathNotification(int32_t handle, BpBinder* proxy);
     LIBBINDER_EXPORTED status_t clearDeathNotification(int32_t handle, BpBinder* proxy);
     [[nodiscard]] status_t addFrozenStateChangeCallback(int32_t handle, BpBinder* proxy);
@@ -212,7 +215,7 @@ public:
     LIBBINDER_EXPORTED static const int32_t kUnsetWorkSource = -1;
 
 private:
-    IPCThreadState();
+    explicit IPCThreadState(bool isHost = false);
     ~IPCThreadState();
 
     [[nodiscard]] status_t sendReply(const Parcel& reply, uint32_t flags);
@@ -234,7 +237,7 @@ private:
 
     static  void                threadDestructor(void *st);
     static void freeBuffer(const uint8_t* data, size_t dataSize, const binder_size_t* objects,
-                           size_t objectsSize);
+                           size_t objectsSize, bool isHost = false);
     static  void                logExtendedError();
 
     const   sp<ProcessState>    mProcess;
@@ -262,6 +265,7 @@ private:
             int32_t             mStrictModePolicy;
             int32_t             mLastTransactionBinderFlags;
             CallRestriction     mCallRestriction;
+            bool                mIsHost;
 #ifdef BINDER_WITH_OBSERVERS
             // This is used and managed by BinderObserver
             std::shared_ptr<BinderStatsSpscQueue> mBinderStatsQueue;
