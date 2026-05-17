@@ -30,6 +30,9 @@ public:
             IInterface();
             static sp<IBinder>  asBinder(const IInterface*);
             static sp<IBinder>  asBinder(const sp<IInterface>&);
+            // Waydroid dual-driver: true if the interface's underlying binder
+            // proxy refers to the host-binder driver.
+            static bool         isHostBinder(const IInterface* iface);
 
 protected:
     virtual                     ~IInterface();

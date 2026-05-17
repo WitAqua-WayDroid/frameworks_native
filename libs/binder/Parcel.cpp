@@ -101,10 +101,12 @@ using binder::borrowed_fd;
 using binder::unique_fd;
 
 // many things compile this into prebuilts on the stack
+// Waydroid dual-driver: extra `mutable bool mIsHost` member bumps the 64-bit
+// size by 8 bytes (120 -> 128) and the 32-bit size by 4 bytes (60 -> 64).
 #ifdef __LP64__
-static_assert(sizeof(Parcel) == 120);
+static_assert(sizeof(Parcel) == 128);
 #else
-static_assert(sizeof(Parcel) == 60);
+static_assert(sizeof(Parcel) == 64);
 #endif
 
 static std::atomic<size_t> gParcelGlobalAllocCount;
@@ -471,7 +473,7 @@ status_t Parcel::unflattenBinder(sp<IBinder>* out) const
             }
             case BINDER_TYPE_HANDLE: {
                 sp<IBinder> binder =
-                    ProcessState::self()->getStrongProxyForHandle(flat->handle);
+                    ProcessState::self(mIsHost)->getStrongProxyForHandle(flat->handle);
                 return finishUnflattenBinder(binder, out);
             }
         }
@@ -489,6 +491,18 @@ Parcel::Parcel()
 {
     LOG_ALLOC("Parcel %p: constructing", this);
     initState();
+}
+
+Parcel::Parcel(bool useHost)
+{
+    LOG_ALLOC("Parcel %p: constructing (useHost=%d)", this, useHost);
+    initState();
+    mIsHost = useHost;
+}
+
+void Parcel::SetIsHost(bool isHost) const
+{
+    mIsHost = isHost;
 }
 
 Parcel::~Parcel()
@@ -679,7 +693,7 @@ status_t Parcel::appendFrom(const Parcel* parcel, size_t offset, size_t len) {
             }
         }
         if (numObjects > 0) {
-            const sp<ProcessState> proc(ProcessState::self());
+            const sp<ProcessState> proc(ProcessState::self(mIsHost));
             // grow objects
             if (kernelFields->mObjectsCapacity < kernelFields->mObjectsSize + numObjects) {
                 if ((size_t)numObjects > SIZE_MAX - kernelFields->mObjectsSize) {
@@ -1974,7 +1988,7 @@ restart_write:
         // Need to write meta-data?
         if (nullMetaData || val.binder != 0) {
             kernelFields->mObjects[kernelFields->mObjectsSize] = mDataPos;
-            acquire_object(ProcessState::self(), val, this, true /*tagFds*/);
+            acquire_object(ProcessState::self(mIsHost), val, this, true /*tagFds*/);
             kernelFields->mObjectsSize++;
             // Clear sorted flag if we aren't appending to the end.
             kernelFields->mObjectsSorted &= mDataPos == mDataSize;
@@ -2967,19 +2981,23 @@ size_t Parcel::ipcObjectsCount() const
 }
 
 static void do_nothing_release_func(const uint8_t* data, size_t dataSize,
-                                    const binder_size_t* objects, size_t objectsCount) {
+                                    const binder_size_t* objects, size_t objectsCount,
+                                    bool isHost) {
     (void)data;
     (void)dataSize;
     (void)objects;
     (void)objectsCount;
+    (void)isHost;
 }
 #ifdef BINDER_WITH_KERNEL_IPC
 static void delete_data_release_func(const uint8_t* data, size_t dataSize,
-                                     const binder_size_t* objects, size_t objectsCount) {
+                                     const binder_size_t* objects, size_t objectsCount,
+                                     bool isHost) {
     delete[] data;
     (void)dataSize;
     (void)objects;
     (void)objectsCount;
+    (void)isHost;
 }
 #endif // BINDER_WITH_KERNEL_IPC
 
@@ -3028,7 +3046,7 @@ void Parcel::makeDangerousViewOf(Parcel* p) {
 }
 
 void Parcel::ipcSetDataReference(const uint8_t* data, size_t dataSize, const binder_size_t* objects,
-                                 size_t objectsCount, release_func relFunc) {
+                                 size_t objectsCount, release_func relFunc, bool isHost) {
     // this code uses 'mOwner == nullptr' to understand whether it owns memory
     LOG_ALWAYS_FATAL_IF(relFunc == nullptr, "must provide cleanup function");
 
@@ -3043,6 +3061,7 @@ void Parcel::ipcSetDataReference(const uint8_t* data, size_t dataSize, const bin
     kernelFields->mObjects = const_cast<binder_size_t*>(objects);
     kernelFields->mObjectsSize = kernelFields->mObjectsCapacity = objectsCount;
     mOwner = relFunc;
+    mIsHost = isHost;
 
 #ifdef BINDER_WITH_KERNEL_IPC
     binder_size_t minOffset = 0;
@@ -3113,7 +3132,7 @@ status_t Parcel::rpcSetDataReference(
             ALOGE("received out of range object position: %" PRIu32
                   " (parcel size is %zu). Terminating.",
                   objectTable[i], dataSize);
-            relFunc(data, dataSize, nullptr, 0);
+            relFunc(data, dataSize, nullptr, 0, false /*isHost*/);
             (void)session.shutdownAndWait(false);
             return BAD_VALUE;
         }
@@ -3231,7 +3250,7 @@ void Parcel::releaseObjects()
     if (i == 0) {
         return;
     }
-    sp<ProcessState> proc(ProcessState::self());
+    sp<ProcessState> proc(ProcessState::self(mIsHost));
     uint8_t* const data = mData;
     binder_size_t* const objects = kernelFields->mObjects;
     while (i > 0) {
@@ -3256,7 +3275,7 @@ void Parcel::reacquireObjects(size_t objectsSize) {
     if (i == 0) {
         return;
     }
-    const sp<ProcessState> proc(ProcessState::self());
+    const sp<ProcessState> proc(ProcessState::self(mIsHost));
     uint8_t* const data = mData;
     binder_size_t* const objects = kernelFields->mObjects;
     while (i > 0) {
@@ -3284,7 +3303,7 @@ void Parcel::freeDataNoInit()
         // Close FDs before freeing, otherwise they will leak for kernel binder.
         closeFileDescriptors(/*newObjectsSize=*/0);
         mOwner(mData, mDataSize, kernelFields ? kernelFields->mObjects : nullptr,
-               kernelFields ? kernelFields->mObjectsSize : 0);
+               kernelFields ? kernelFields->mObjectsSize : 0, mIsHost);
     } else {
         LOG_ALLOC("Parcel %p: freeing allocated data", this);
         releaseObjects();
@@ -3518,7 +3537,7 @@ status_t Parcel::continueWrite(size_t desired)
         }
 #endif // BINDER_WITH_KERNEL_IPC
         mOwner(mData, mDataSize, kernelFields ? kernelFields->mObjects : nullptr,
-               kernelFields ? kernelFields->mObjectsSize : 0);
+               kernelFields ? kernelFields->mObjectsSize : 0, mIsHost);
         mOwner = nullptr;
 
         LOG_ALLOC("Parcel %p: taking ownership of %zu capacity", this, desired);
@@ -3540,7 +3559,7 @@ status_t Parcel::continueWrite(size_t desired)
         if (kernelFields && objectsSize < kernelFields->mObjectsSize) {
 #ifdef BINDER_WITH_KERNEL_IPC
             // Need to release refs on any objects we are dropping.
-            const sp<ProcessState> proc(ProcessState::self());
+            const sp<ProcessState> proc(ProcessState::self(mIsHost));
             for (size_t i = objectsSize; i < kernelFields->mObjectsSize; i++) {
                 const flat_binder_object* flat =
                         reinterpret_cast<flat_binder_object*>(mData + kernelFields->mObjects[i]);
@@ -3712,6 +3731,7 @@ void Parcel::initState()
     mAllowFds = true;
     mDeallocZero = false;
     mOwner = nullptr;
+    mIsHost = false;
     mEnforceNoDataAvail = true;
     mServiceFuzzing = false;
 }

@@ -21,6 +21,8 @@
 #include <binder/Trace.h>
 #include <map>
 #include <memory>
+#include <string>
+#include <unordered_set>
 
 namespace android {
 
@@ -173,7 +175,14 @@ private:
     binder::Status updateCache(const std::string& serviceName, const sp<IBinder>& binder,
                                bool isLazyService);
     bool returnIfCached(const std::string& serviceName, os::Service* _out);
+    // Waydroid dual-driver: route whitelisted AIDL names to the host binder
+    // servicemanager. Returns an ok Status with nullptr service on miss.
+    binder::Status queryHostService(const std::string& name, os::Service* _out);
 };
+
+// Waydroid dual-driver: true if `name` is in /system/etc/hostaidls.conf.
+// Loads the whitelist lazily on first call.
+bool isHostAidlService(const std::string& name);
 
 sp<BackendUnifiedServiceManager> getBackendUnifiedServiceManager();
 

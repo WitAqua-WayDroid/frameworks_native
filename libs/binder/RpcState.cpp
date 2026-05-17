@@ -771,11 +771,12 @@ status_t RpcState::transactInternal(RpcSession::RpcConnection& connection,
 }
 
 static void cleanup_reply_data(const uint8_t* data, size_t dataSize, const binder_size_t* objects,
-                               size_t objectsCount) {
+                               size_t objectsCount, bool isHost) {
     delete[] const_cast<uint8_t*>(data);
     (void)dataSize;
     LOG_ALWAYS_FATAL_IF(objects != nullptr);
     (void)objectsCount;
+    (void)isHost;
 }
 
 status_t RpcState::waitForReply(RpcSession::RpcConnection& connection, RpcSession& session,
@@ -1033,11 +1034,13 @@ status_t RpcState::processTransact(
 }
 
 static void do_nothing_to_transact_data(const uint8_t* data, size_t dataSize,
-                                        const binder_size_t* objects, size_t objectsCount) {
+                                        const binder_size_t* objects, size_t objectsCount,
+                                        bool isHost) {
     (void)data;
     (void)dataSize;
     (void)objects;
     (void)objectsCount;
+    (void)isHost;
 }
 
 // ACCORDING TO RPC BINDER PROTOCOL:
