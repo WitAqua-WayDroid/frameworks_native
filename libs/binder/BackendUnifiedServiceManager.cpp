@@ -20,10 +20,17 @@
 #include <android-base/strings.h>
 #include <android/os/IAccessor.h>
 #include <android/os/IServiceManager.h>
+#include <binder/ProcessState.h>
 #include <binder/RpcSession.h>
+#include <binder/Stability.h>
 #include <cutils/sockets.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+
+#include <fstream>
+#include <mutex>
+#include <string>
+#include <unordered_set>
 
 #if defined(__BIONIC__) && !defined(__ANDROID_VNDK__)
 #include <android-base/properties.h>
@@ -56,6 +63,57 @@ constexpr bool kRemoveStaticList = false;
 using AidlServiceManager = android::os::IServiceManager;
 using android::os::IAccessor;
 using binder::Status;
+
+// Waydroid dual-driver: whitelist of AIDL service names to route to the host
+// binder servicemanager. Loaded lazily from /system/etc/hostaidls.conf on
+// first access; file format is one service name per line, '#' starts a
+// comment, blank lines are ignored. Intentionally dep-free (no XML parser).
+namespace {
+[[clang::no_destroy]] static std::once_flag gHostAidlsOnce;
+[[clang::no_destroy]] static std::unordered_set<std::string> gHostAidls;
+
+static void loadHostAidlsLocked() {
+    std::ifstream f("/system/etc/hostaidls.conf");
+    if (!f.good()) {
+        ALOGI("Waydroid: /system/etc/hostaidls.conf not found; "
+              "host-AIDL passthrough disabled");
+        return;
+    }
+    std::string line;
+    while (std::getline(f, line)) {
+        // strip comments
+        size_t hash = line.find('#');
+        if (hash != std::string::npos) line.erase(hash);
+        // trim
+        size_t start = line.find_first_not_of(" \t\r\n");
+        if (start == std::string::npos) continue;
+        size_t end = line.find_last_not_of(" \t\r\n");
+        std::string name = line.substr(start, end - start + 1);
+        if (name.empty()) continue;
+        gHostAidls.insert(name);
+        ALOGI("Waydroid: host-AIDL whitelisted: %s", name.c_str());
+    }
+}
+} // anonymous namespace (still inside ::android below)
+
+// NOTE: This file is already inside `namespace android { ... }` which opens
+// near the top of the translation unit and closes at EOF, so the following
+// definition is emitted as `android::isHostAidlService` -- matching the
+// declaration in BackendUnifiedServiceManager.h and the call sites in
+// IServiceManager.cpp.
+bool isHostAidlService(const std::string& name) {
+    std::call_once(gHostAidlsOnce, loadHostAidlsLocked);
+    if (gHostAidls.count(name) > 0) return true;
+    // Also match if any whitelisted entry is a prefix of the service name
+    // ending with /
+    for (const auto& entry : gHostAidls) {
+        if (name.size() > entry.size() && name[entry.size()] == '/' &&
+            name.compare(0, entry.size(), entry) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
 
 static const char* kUnsupportedOpNoServiceManager =
         "Unsupported operation without a kernel binder servicemanager process";
@@ -212,6 +270,11 @@ bool BackendUnifiedServiceManager::returnIfCached(const std::string& serviceName
     if (!kUseCache) {
         return false;
     }
+    // Waydroid dual-driver: never serve host-AIDL names from the normal cache
+    // (they live in the host servicemanager, not the local one).
+    if (isHostAidlService(serviceName)) {
+        return false;
+    }
     sp<IBinder> item = mCacheForGetService->getItem(serviceName);
     // TODO(b/363177618): Enable caching for binders which are always null.
     if (item != nullptr && item->isBinderAlive()) {
@@ -219,6 +282,46 @@ bool BackendUnifiedServiceManager::returnIfCached(const std::string& serviceName
         return true;
     }
     return false;
+}
+
+Status BackendUnifiedServiceManager::queryHostService(const std::string& name,
+                                                      os::Service* _out) {
+    *_out = os::Service::make<os::Service::Tag::serviceWithMetadata>(
+            createServiceWithMetadata(nullptr, false));
+
+    sp<ProcessState> host = ProcessState::self(/*isHost=*/true);
+    if (host == nullptr || host->getDriverName().empty()) {
+        ALOGW("Waydroid: host ProcessState unavailable for %s", name.c_str());
+        return Status::ok();
+    }
+    sp<IBinder> ctx = host->getContextObject(nullptr);
+    if (ctx == nullptr) {
+        ALOGW("Waydroid: no host servicemanager context for %s", name.c_str());
+        return Status::ok();
+    }
+    // Stability is already set by getContextObject()'s markCompilationUnit().
+    // Do NOT forceDowngradeToLocalStability() on host binders: they are remote
+    // BpBinders and that path asserts local-only (BBinder) and would FATAL.
+
+    sp<IBinder> out;
+    sp<AidlServiceManager> hostSm = interface_cast<AidlServiceManager>(ctx);
+    if (hostSm == nullptr) {
+        ALOGW("Waydroid: host context is not an AidlServiceManager");
+        return Status::ok();
+    }
+    Status status = hostSm->checkService(name, &out);
+    if (!status.isOk()) {
+        ALOGW("Waydroid: host checkService(%s) failed: %s", name.c_str(),
+              status.toString8().c_str());
+        return status;
+    }
+
+    if (out != nullptr) {
+        ALOGI("Waydroid: host resolved %s -> binder %p", name.c_str(), out.get());
+        *_out = os::Service::make<os::Service::Tag::serviceWithMetadata>(
+                createServiceWithMetadata(out, false));
+    }
+    return status;
 }
 
 BackendUnifiedServiceManager::BackendUnifiedServiceManager(const sp<AidlServiceManager>& impl)
@@ -278,6 +381,21 @@ Status BackendUnifiedServiceManager::checkService2(const ::std::string& name, os
     if (status.isOk()) {
         status = toBinderService(name, service, _out);
         if (status.isOk()) {
+            // Waydroid dual-driver: if the local servicemanager returned null
+            // for a whitelisted AIDL name, retry against the host binder.
+            if (isHostAidlService(name)) {
+                const auto meta = _out->get<os::Service::Tag::serviceWithMetadata>();
+                ALOGI("Waydroid: checkService2(%s) local=%s, trying host",
+                      name.c_str(), meta.service != nullptr ? "non-null" : "null");
+                if (meta.service == nullptr) {
+                    Status hostStatus = queryHostService(name, _out);
+                    ALOGI("Waydroid: queryHostService(%s) returned %s",
+                          name.c_str(), hostStatus.isOk() ? "ok" : hostStatus.toString8().c_str());
+                    if (!hostStatus.isOk()) return hostStatus;
+                    // Do not cache host services.
+                    return Status::ok();
+                }
+            }
             return updateCache(name, service);
         }
     }
@@ -421,6 +539,13 @@ Status BackendUnifiedServiceManager::isDeclared(const ::std::string& name, bool*
                 *_aidl_return = true;
             }
         });
+    }
+
+    // Waydroid: host-AIDL services are not in the container VINTF manifest
+    // but are reachable via the dual-driver binder bridge. Which services
+    // appear declared is controlled by /system/etc/hostaidls.conf on device.
+    if (!*_aidl_return && isHostAidlService(name)) {
+        *_aidl_return = true;
     }
 
     return status;

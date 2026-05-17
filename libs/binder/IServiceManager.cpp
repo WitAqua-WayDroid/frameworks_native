@@ -558,14 +558,16 @@ void* openDeclaredPassthroughHal(const String16& interface, const String16& inst
         !defined(__ANDROID_NATIVE_BRIDGE__)
     sp<IServiceManager> sm = defaultServiceManager();
     String16 name = interface + String16("/") + instance;
-    if (!sm->isDeclared(name)) {
-        return nullptr;
-    }
     String16 libraryName = interface + String16(".") + instance + String16(".so");
-    if (auto updatableViaApex = sm->updatableViaApex(name); updatableViaApex.has_value()) {
-        return AApexSupport_loadLibrary(String8(libraryName).c_str(),
-                                        String8(*updatableViaApex).c_str(), flag);
+    if (sm->isDeclared(name)) {
+        if (auto updatableViaApex = sm->updatableViaApex(name); updatableViaApex.has_value()) {
+            return AApexSupport_loadLibrary(String8(libraryName).c_str(),
+                                            String8(*updatableViaApex).c_str(), flag);
+        }
+        return android_load_sphal_library(String8(libraryName).c_str(), flag);
     }
+    // Halium: HAL not declared in container VINTF but may exist in /vendor_extra
+    // via linkerconfig vendor namespace search paths
     return android_load_sphal_library(String8(libraryName).c_str(), flag);
 #else
     (void)interface;
@@ -658,6 +660,16 @@ Vector<String16> CppBackendShim::listServices(int dumpsysPriority) {
 }
 
 sp<IBinder> CppBackendShim::waitForService(const String16& name16) {
+    // Waydroid dual-driver: host-AIDL names never register for notifications
+    // against the local servicemanager (which doesn't own them), so
+    // short-circuit to checkService which triggers the host-binder retry path.
+    {
+        const std::string hostName = String8(name16).c_str();
+        if (isHostAidlService(hostName)) {
+            return checkService(name16);
+        }
+    }
+
     class Waiter : public android::os::BnServiceCallback {
         Status onRegistration(const std::string& /*name*/,
                               const sp<IBinder>& binder) override {

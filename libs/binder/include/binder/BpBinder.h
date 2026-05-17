@@ -98,6 +98,10 @@ public:
 
     LIBBINDER_EXPORTED std::optional<int32_t> getDebugBinderHandle() const;
 
+    // Waydroid dual-driver: true if this BpBinder refers to a handle minted
+    // from the host ProcessState (i.e., /dev/host_binder).
+    LIBBINDER_EXPORTED bool isHostBinder() const;
+
     // Start recording transactions to the unique_fd.
     // See RecordedTransaction.h for more details.
     LIBBINDER_EXPORTED status_t startRecordingBinder(const binder::unique_fd& fd);
@@ -145,6 +149,10 @@ public:
         static sp<BpBinder> create(int32_t handle, std::function<void()>* postTask) {
             return BpBinder::create(handle, postTask);
         }
+        static sp<BpBinder> create(int32_t handle, bool isHost,
+                                   std::function<void()>* postTask) {
+            return BpBinder::create(handle, isHost, postTask);
+        }
         static sp<BpBinder> create(const sp<RpcSession>& session, uint64_t address) {
             return BpBinder::create(session, address);
         }
@@ -175,10 +183,12 @@ private:
     friend class sp<BpBinder>;
 
     static sp<BpBinder> create(int32_t handle, std::function<void()>* postTask);
+    static sp<BpBinder> create(int32_t handle, bool isHost, std::function<void()>* postTask);
     static sp<BpBinder> create(const sp<RpcSession>& session, uint64_t address);
 
     struct BinderHandle {
         int32_t handle;
+        bool isHost = false;
     };
     struct RpcHandle {
         sp<RpcSession> session;
@@ -189,6 +199,9 @@ private:
     int32_t binderHandle() const;
     uint64_t rpcAddress() const;
     const sp<RpcSession>& rpcSession() const;
+    // Waydroid dual-driver: returns true when handle is a kernel BinderHandle
+    // with isHost=true. RPC handles can never be host.
+    bool isHostBinderHandle() const;
 
     explicit BpBinder(Handle&& handle);
     BpBinder(BinderHandle&& handle, int32_t trackedUid);

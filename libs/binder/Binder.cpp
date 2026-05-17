@@ -100,6 +100,13 @@ BpBinder* IBinder::remoteBinder()
     return nullptr;
 }
 
+bool IBinder::isHostBinder() const
+{
+    BpBinder* proxy = const_cast<IBinder*>(this)->remoteBinder();
+    if (proxy == nullptr) return false;
+    return proxy->isHostBinder();
+}
+
 bool IBinder::checkSubclass(const void* /*subclassID*/) const
 {
     return false;

@@ -341,6 +341,10 @@ public:
 
     virtual BBinder*        localBinder();
     virtual BpBinder*       remoteBinder();
+    // Waydroid dual-driver: true when this IBinder is a proxy minted from
+    // the host ProcessState. Default: delegates to remoteBinder()->isHostBinder()
+    // (returns false for local binders and null proxies).
+    virtual bool            isHostBinder() const;
     typedef sp<IBinder> (*object_make_func)(const void* makeArgs);
     sp<IBinder> lookupOrCreateWeak(const void* objectID, object_make_func make,
                                    const void* makeArgs);

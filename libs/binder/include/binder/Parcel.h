@@ -70,7 +70,13 @@ public:
     class WritableBlob;
 
     LIBBINDER_EXPORTED Parcel();
+    LIBBINDER_EXPORTED explicit Parcel(bool useHost);
     LIBBINDER_EXPORTED ~Parcel();
+
+    // Waydroid dual-driver: stamp the parcel so its binders flatten/unflatten
+    // through the host ProcessState. mutable allows stamping a const Parcel&
+    // after a transact (see BpBinder::transact).
+    LIBBINDER_EXPORTED void SetIsHost(bool isHost) const;
 
     LIBBINDER_EXPORTED const uint8_t* data() const;
     LIBBINDER_EXPORTED size_t dataSize() const;
@@ -661,15 +667,17 @@ private:
     void closeFileDescriptors(size_t newObjectsSize);
 
     // `objects` and `objectsSize` always 0 for RPC Parcels.
+    // Waydroid dual-driver: trailing `isHost` propagates the host-driver flag
+    // so freeBuffer routes through the correct IPCThreadState.
     typedef void (*release_func)(const uint8_t* data, size_t dataSize, const binder_size_t* objects,
-                                 size_t objectsSize);
+                                 size_t objectsSize, bool isHost);
 
     uintptr_t           ipcData() const;
     size_t              ipcDataSize() const;
     uintptr_t           ipcObjects() const;
     size_t              ipcObjectsCount() const;
     void ipcSetDataReference(const uint8_t* data, size_t dataSize, const binder_size_t* objects,
-                             size_t objectsCount, release_func relFunc);
+                             size_t objectsCount, release_func relFunc, bool isHost = false);
     // Takes ownership even when an error is returned.
     [[nodiscard]] status_t rpcSetDataReference(
             const sp<RpcSession>& session, const uint8_t* data, size_t dataSize,
@@ -1476,6 +1484,10 @@ private:
     bool mServiceFuzzing;
 
     release_func        mOwner;
+
+    // Waydroid dual-driver: which binder driver this parcel is bound to.
+    // `mutable` because SetIsHost() is a const stamping mutator (see header).
+    mutable bool        mIsHost = false;
 
     size_t mReserved;
 
