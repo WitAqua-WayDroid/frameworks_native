@@ -306,7 +306,8 @@ ssize_t getBinderKernelReferences(size_t count, uintptr_t* buf) {
         return 0;
     }
 
-    sp<ProcessState> proc = ProcessState::selfOrNull();
+    const bool useHostBinder = false;
+    sp<ProcessState> proc = ProcessState::selfOrNull(useHostBinder);
     if (proc.get() == nullptr) {
         return 0;
     }
