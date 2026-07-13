@@ -98,7 +98,7 @@ void MultiTouchMotionAccumulator::syncSlots(const InputDeviceContext& deviceCont
                                                    ABS_MT_TOOL_TYPE};
     const size_t numSlots = mSlots.size();
     for (int32_t axisCode : axisCodes) {
-        if (!deviceContext.hasAbsoluteAxis(axisCode)) {
+        if (!deviceContext.hasAbsoluteAxis(axisCode) || deviceContext.getDeviceIdentifier().location == "wayland") {
             continue;
         }
         const auto result = deviceContext.getMtSlotValues(axisCode, numSlots);
