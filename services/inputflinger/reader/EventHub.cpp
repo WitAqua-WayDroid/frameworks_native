@@ -662,11 +662,13 @@ bool EventHub::Device::configureFd() {
 }
 
 bool EventHub::Device::readDeviceState() {
-    if (readDeviceBitMask(EVIOCGKEY(0), keyState) < 0) {
-        ALOGD("Unable to query the global key state for %s: %s", path.c_str(), strerror(errno));
-    }
-    if (readDeviceBitMask(EVIOCGSW(0), swState) < 0) {
-        ALOGD("Unable to query the global switch state for %s: %s", path.c_str(), strerror(errno));
+    if (identifier.location != "wayland") {
+        if (readDeviceBitMask(EVIOCGKEY(0), keyState) < 0) {
+            ALOGD("Unable to query the global key state for %s: %s", path.c_str(), strerror(errno));
+        }
+        if (readDeviceBitMask(EVIOCGSW(0), swState) < 0) {
+            ALOGD("Unable to query the global switch state for %s: %s", path.c_str(), strerror(errno));
+        }
     }
 
     // Read absolute axis info and values for all available axes for the device.
