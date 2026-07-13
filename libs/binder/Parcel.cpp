@@ -1241,6 +1241,10 @@ bool Parcel::enforceInterface(const char16_t* interface,
             // this point, but it would be extremely fragile. It's more important that
             // we fuzz with the above things read from the Parcel.
             return true;
+        } else if (strncmp(String8(interface, len), "id.waydro.", 10) == 0 &&
+                strncmp(String8(parcel_interface, parcel_interface_len), "lineageos.waydroid.", 19) == 0) {
+            // Allow interface name mismatch for Waydroid framework
+            return true;
         } else {
             ALOGW("**** enforceInterface() expected '%s' but read '%s'",
                   String8(interface, len).c_str(),
