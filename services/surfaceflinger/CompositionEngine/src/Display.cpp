@@ -303,7 +303,10 @@ void Display::applyCompositionStrategy(const std::optional<DeviceRequestedChange
 
     // Determine what type of composition we are doing from the final state
     auto& state = editState();
-    state.usesClientComposition = anyLayersRequireClientComposition();
+    // Waydroid: hwcomposer runs through HWC2On1Adapter, which always expects a
+    // framebuffer target, so keep client composition on even when no layer asks
+    // for it. Device composition is still selected per layer.
+    state.usesClientComposition = true;
     state.usesDeviceComposition = !allLayersRequireClientComposition();
 }
 
