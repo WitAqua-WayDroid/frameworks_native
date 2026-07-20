@@ -1151,12 +1151,18 @@ Error Layer::setPictureProfileHandle(const PictureProfileHandle& handle) {
 
 Error Layer::setLayerName(std::string name)
 {
+    if (CC_UNLIKELY(!mDisplay)) {
+        return Error::BAD_DISPLAY;
+    }
     auto intError = mComposer.setLayerName(mDisplay->getId(), mId, name);
     return static_cast<Error>(intError);
 }
 
 Error Layer::setLayerHandleInfo(const sp<GraphicBuffer>& buffer)
 {
+    if (CC_UNLIKELY(!mDisplay)) {
+        return Error::BAD_DISPLAY;
+    }
     auto intError = mComposer.setLayerHandleInfo(mDisplay->getId(), mId, buffer);
     return static_cast<Error>(intError);
 }

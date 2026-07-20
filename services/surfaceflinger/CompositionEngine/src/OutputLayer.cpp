@@ -885,6 +885,15 @@ void OutputLayer::writeBufferStateToHWC(HWC2::Layer* hwcLayer,
         state.hwc->activeBufferSlot = hwcSlotAndBuffer.slot;
     }
 
+    // Waydroid: send buffer metadata to hwcomposer via IWaydroidDisplay extension.
+    // This must happen per-frame (not just geometry) because the buffer may not
+    // be available during the initial geometry update.
+    if (auto error = hwcLayer->setLayerHandleInfo(outputIndependentState.buffer);
+        error != hal::Error::NONE && error != hal::Error::UNSUPPORTED) {
+        ALOGE("[%s] Failed to set layer buffer info: %s (%d)", getLayerFE().getDebugName(),
+              to_string(error).c_str(), static_cast<int32_t>(error));
+    }
+
     if (auto error = hwcLayer->setBuffer(hwcSlotAndBuffer.slot, hwcSlotAndBuffer.buffer, hwcFence);
         error != hal::Error::NONE) {
         ALOGE("[%s] Failed to set buffer %p: %s (%d)", getLayerFE().getDebugName(),
