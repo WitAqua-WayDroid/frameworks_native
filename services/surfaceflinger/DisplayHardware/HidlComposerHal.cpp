@@ -22,6 +22,7 @@
 
 #include "HidlComposerHal.h"
 
+#include <binder/Parcel.h>
 #include <SurfaceFlingerProperties.h>
 #include <aidl/android/hardware/graphics/common/DisplayHotplugEvent.h>
 #include <android/binder_manager.h>

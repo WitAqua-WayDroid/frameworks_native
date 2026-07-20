@@ -125,6 +125,8 @@ public:
     MOCK_METHOD3(setLayerVisibleRegion,
                  Error(Display, Layer, const std::vector<IComposerClient::Rect>&));
     MOCK_METHOD3(setLayerZOrder, Error(Display, Layer, uint32_t));
+    MOCK_METHOD3(setLayerName, Error(Display, Layer, std::string));
+    MOCK_METHOD3(setLayerHandleInfo, Error(Display, Layer, const sp<GraphicBuffer>&));
     MOCK_METHOD3(getRenderIntents, Error(Display, ColorMode, std::vector<RenderIntent>*));
     MOCK_METHOD3(setLayerColorTransform, Error(Display, Layer, const float*));
     MOCK_METHOD4(getDisplayedContentSamplingAttributes,
