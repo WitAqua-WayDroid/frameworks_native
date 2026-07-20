@@ -33,6 +33,9 @@ cc_aconfig_library {
 
 cc_defaults {
     name: "surfaceflinger_defaults",
+    header_libs: [
+        "vendor.waydroid.display-headers",
+    ],
     defaults: [
         "no_bti",
     ],
