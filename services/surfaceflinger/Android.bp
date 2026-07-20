@@ -27,6 +27,9 @@ cc_aconfig_library {
 
 cc_defaults {
     name: "surfaceflinger_defaults",
+    header_libs: [
+        "vendor.waydroid.display-headers",
+    ],
     cflags: [
         "-DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION",
         "-DLOG_TAG=\"SurfaceFlinger\"",

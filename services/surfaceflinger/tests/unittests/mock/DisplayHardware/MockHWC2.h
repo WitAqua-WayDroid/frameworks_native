@@ -160,6 +160,8 @@ public:
     MOCK_METHOD(hal::Error, setVisibleRegion, (const android::Region &), (override));
     MOCK_METHOD(hal::Error, setZOrder, (uint32_t), (override));
     MOCK_METHOD(hal::Error, setColorTransform, (const android::mat4 &), (override));
+    MOCK_METHOD(hal::Error, setLayerName, (std::string), (override));
+    MOCK_METHOD(hal::Error, setLayerHandleInfo, (const sp<GraphicBuffer>&), (override));
     MOCK_METHOD(hal::Error, setLayerGenericMetadata,
                 (const std::string &, bool, const std::vector<uint8_t> &), (override));
     MOCK_METHOD(hal::Error, setBrightness, (float), (override));
