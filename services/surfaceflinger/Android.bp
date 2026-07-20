@@ -92,6 +92,9 @@ cc_defaults {
         "performance*",
         "portability*",
     ],
+    header_libs: [
+        "vendor.waydroid.display-headers",
+    ],
     cflags: [
         "-DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION",
         "-DLOG_TAG=\"SurfaceFlinger\"",
