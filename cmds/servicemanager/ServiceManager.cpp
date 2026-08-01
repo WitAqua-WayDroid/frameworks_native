@@ -509,13 +509,23 @@ bool isValidServiceName(const std::string& name) {
     return true;
 }
 
+// The Waydroid host talks to us over the host binder node, so its caller uid is
+// an ordinary Linux uid of the desktop user. That lands in the Android app uid
+// range, which would reject the host's own services (waydroidusermonitor).
+// Read per call: the property is set from the container config, which is not
+// guaranteed to be loaded before servicemanager first runs.
+static bool isWaydroidHostUid(uid_t uid) {
+    uid_t hostUid = android::base::GetUintProperty<uid_t>("waydroid.host.uid", 0);
+    return hostUid != 0 && uid == hostUid;
+}
+
 Status ServiceManager::addService(const std::string& name, const sp<IBinder>& binder, bool allowIsolated, int32_t dumpPriority) {
     SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_PROTO_FIELDS(
             PERFETTO_TE_PROTO_FIELD_CSTR(kProtoServiceName, name.c_str())));
 
     auto ctx = mAccess->getCallingContext();
 
-    if (multiuser_get_app_id(ctx.uid) >= AID_APP) {
+    if (multiuser_get_app_id(ctx.uid) >= AID_APP && !isWaydroidHostUid(ctx.uid)) {
         return Status::fromExceptionCode(Status::EX_SECURITY, "App UIDs cannot add services.");
     }
 
