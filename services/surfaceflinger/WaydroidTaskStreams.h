@@ -18,7 +18,10 @@
 
 #include <android-base/thread_annotations.h>
 #include <renderengine/ExternalTexture.h>
+#include <ui/Fence.h>
+#include <ui/GraphicBuffer.h>
 #include <utils/Timers.h>
+#include <vendor/waydroid/display/1.3/IWaydroidDisplay.h>
 
 #include <condition_variable>
 #include <memory>
@@ -58,22 +61,35 @@ private:
         std::unordered_set<uint32_t> layerIds;
     };
 
+    // Two buffers per task: one held by the host compositor, one to render
+    // into. Slot busy-ness follows the HAL's wl_buffer.release reports.
+    static constexpr uint32_t kSlotsPerTask = 2;
+
     struct TaskStream {
-        std::shared_ptr<renderengine::ExternalTexture> texture;
+        struct Slot {
+            std::shared_ptr<renderengine::ExternalTexture> texture;
+            bool busy = false;
+        };
+        Slot slots[kSlotsPerTask];
         nsecs_t renderTotalNs = 0;
         int renderedFrames = 0;
         int emptyFrames = 0;
+        int starvedFrames = 0;
+        int postFailures = 0;
     };
 
     void threadMain();
     void renderTasks(const std::vector<TaskCapture>& tasks);
     void renderTask(const TaskCapture& task, TaskStream& stream, bool dump);
-    void dumpStream(int32_t taskId, const TaskStream& stream);
+    void postBuffer(int32_t taskId, uint32_t slot, TaskStream& stream, const sp<Fence>& fence);
+    void dumpBuffer(int32_t taskId, const sp<GraphicBuffer>& buffer);
 
     SurfaceFlinger& mFlinger;
 
     // Render thread only.
     std::unordered_map<int32_t, TaskStream> mStreams;
+    sp<vendor::waydroid::display::V1_3::IWaydroidDisplay> mHal;
+    int mNoHalLogged = 0;
 
     std::mutex mMutex;
     std::condition_variable mCondition;
