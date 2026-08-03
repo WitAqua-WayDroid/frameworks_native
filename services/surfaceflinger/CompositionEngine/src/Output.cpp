@@ -1870,6 +1870,10 @@ const aidl::android::hardware::graphics::composer3::OverlayProperties* Output::g
     return nullptr;
 }
 
+bool waydroidTaskStreamsActive() {
+    return base::GetBoolProperty(std::string("waydroid.task_streams_active"), false);
+}
+
 bool Output::canPredictCompositionStrategy(const CompositionRefreshArgs& refreshArgs) {
     uint64_t lastOutputLayerHash = getState().lastOutputLayerHash;
     uint64_t outputLayerHash = getState().outputLayerHash;
@@ -1877,6 +1881,11 @@ bool Output::canPredictCompositionStrategy(const CompositionRefreshArgs& refresh
 
     if (!getState().isEnabled || !mPredictCompositionStrategy) {
         ALOGV("canPredictCompositionStrategy disabled");
+        return false;
+    }
+
+    // Waydroid: prediction composes early, which finishFrame would discard.
+    if (waydroidTaskStreamsActive()) {
         return false;
     }
 

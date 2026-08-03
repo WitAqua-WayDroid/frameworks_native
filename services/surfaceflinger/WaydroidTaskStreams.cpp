@@ -209,8 +209,22 @@ bool WaydroidTaskStreams::renderTasks(const std::vector<TaskCapture>& tasks) {
         mStreams.erase(oldest);
     }
 
+    // Ask the HAL which of these tasks it wants content for, so tasks whose
+    // posts would be refused (launcher, blacklist) or withheld (deactivated
+    // or unfocused cards keep their last frame) are not rendered at all.
+    const Gate gate = queryWantedTasks(tasks);
+    if (gate != mGate) {
+        ALOGI("task gate: %s (%zu of %zu tasks wanted)",
+              gate == Gate::Active ? "active"
+                                   : gate == Gate::Inactive ? "streams inactive" : "unavailable",
+              mWanted.size(), tasks.size());
+        mGate = gate;
+    }
+
     bool withheld = false;
     for (const auto& task : tasks) {
+        if (gate == Gate::Inactive) break;
+        if (gate == Gate::Active && mWanted.count(task.taskId) == 0) continue;
         withheld |= renderTask(task, mStreams[task.taskId], dump);
     }
 
@@ -361,22 +375,63 @@ bool WaydroidTaskStreams::renderTask(const TaskCapture& task, TaskStream& stream
     return false;
 }
 
+bool WaydroidTaskStreams::connectHal() {
+    using ::vendor::waydroid::display::V1_3::IWaydroidDisplay;
+
+    if (mHal) {
+        return true;
+    }
+    mHal = IWaydroidDisplay::tryGetService();
+    if (!mHal) {
+        if (++mNoHalLogged % kLogEveryFrames == 1) {
+            ALOGW("display@1.3 HAL not up yet, dropping posts");
+        }
+        return false;
+    }
+    ALOGI("connected to display@1.3");
+    return true;
+}
+
+WaydroidTaskStreams::Gate WaydroidTaskStreams::queryWantedTasks(
+        const std::vector<TaskCapture>& tasks) {
+    using ::android::hardware::hidl_vec;
+    using ::android::hardware::graphics::composer::V2_1::Error;
+
+    mWanted.clear();
+    if (!connectHal()) {
+        return Gate::Unavailable;
+    }
+
+    hidl_vec<uint32_t> ids;
+    ids.resize(tasks.size());
+    for (size_t i = 0; i < tasks.size(); i++) {
+        ids[i] = static_cast<uint32_t>(tasks[i].taskId);
+    }
+
+    Error error = Error::BAD_DISPLAY;
+    auto ret = mHal->updateTaskList(ids, [&](Error e, const hidl_vec<uint32_t>& wanted) {
+        error = e;
+        for (uint32_t taskId : wanted) {
+            mWanted.insert(static_cast<int32_t>(taskId));
+        }
+    });
+    if (!ret.isOk()) {
+        ALOGW("display@1.3 died (%s), reconnecting", ret.description().c_str());
+        mHal = nullptr;
+        mWanted.clear();
+        return Gate::Unavailable;
+    }
+    return error == Error::NONE ? Gate::Active : Gate::Inactive;
+}
+
 void WaydroidTaskStreams::postBuffer(int32_t taskId, uint32_t slot, TaskStream& stream,
                                      const sp<Fence>& fence) {
     using ::android::hardware::hidl_handle;
     using ::android::hardware::hidl_vec;
     using ::android::hardware::graphics::composer::V2_1::Error;
-    using ::vendor::waydroid::display::V1_3::IWaydroidDisplay;
 
-    if (!mHal) {
-        mHal = IWaydroidDisplay::tryGetService();
-        if (!mHal) {
-            if (++mNoHalLogged % kLogEveryFrames == 1) {
-                ALOGW("display@1.3 HAL not up yet, dropping posts");
-            }
-            return;
-        }
-        ALOGI("connected to display@1.3");
+    if (!connectHal()) {
+        return;
     }
 
     const sp<GraphicBuffer>& buffer = stream.slots[slot].texture->getBuffer();
