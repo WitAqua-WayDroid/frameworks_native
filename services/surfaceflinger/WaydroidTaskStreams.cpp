@@ -151,6 +151,19 @@ void WaydroidTaskStreams::renderTasks(const std::vector<TaskCapture>& tasks) {
 }
 
 void WaydroidTaskStreams::renderTask(const TaskCapture& task, TaskStream& stream, bool dump) {
+    // Pick a slot the host compositor is not holding.
+    uint32_t slot = kSlotsPerTask;
+    for (uint32_t i = 0; i < kSlotsPerTask; i++) {
+        if (!stream.slots[i].busy) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot == kSlotsPerTask) {
+        stream.starvedFrames++;
+        return;
+    }
+
     auto filterFn = [&task](const frontend::LayerSnapshot& snapshot,
                             bool& /*outStopTraversal*/) -> bool {
         return task.layerIds.count(snapshot.path.id) != 0;
@@ -180,9 +193,10 @@ void WaydroidTaskStreams::renderTask(const TaskCapture& task, TaskStream& stream
         return;
     }
 
-    if (!stream.texture ||
-        stream.texture->getBuffer()->getWidth() != static_cast<uint32_t>(args.size.getWidth()) ||
-        stream.texture->getBuffer()->getHeight() != static_cast<uint32_t>(args.size.getHeight())) {
+    auto& texture = stream.slots[slot].texture;
+    if (!texture ||
+        texture->getBuffer()->getWidth() != static_cast<uint32_t>(args.size.getWidth()) ||
+        texture->getBuffer()->getHeight() != static_cast<uint32_t>(args.size.getHeight())) {
         const uint32_t usage = GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_HW_RENDER |
                 GRALLOC_USAGE_HW_TEXTURE | GRALLOC_USAGE_HW_COMPOSER;
         sp<GraphicBuffer> buffer =
@@ -194,38 +208,100 @@ void WaydroidTaskStreams::renderTask(const TaskCapture& task, TaskStream& stream
                   args.size.getWidth(), args.size.getHeight(), buffer->initCheck());
             return;
         }
-        stream.texture = std::make_shared<
+        texture = std::make_shared<
                 renderengine::impl::ExternalTexture>(buffer, mFlinger.getRenderEngine(),
                                                      renderengine::impl::ExternalTexture::Usage::
                                                              WRITEABLE);
-        ALOGI("task %d: allocated %dx%d stream buffer", task.taskId, args.size.getWidth(),
-              args.size.getHeight());
+        ALOGI("task %d: allocated %dx%d stream buffer (slot %u)", task.taskId,
+              args.size.getWidth(), args.size.getHeight(), slot);
     }
 
-    FenceResult fenceResult = mFlinger.captureScreenshot(args, stream.texture, nullptr).get();
-    if (fenceResult.ok()) {
-        fenceResult.value()->waitForever(LOG_TAG);
-    } else {
+    FenceResult fenceResult = mFlinger.captureScreenshot(args, texture, nullptr).get();
+    if (!fenceResult.ok()) {
         ALOGW("task %d: render failed (%d)", task.taskId, fenceResult.error());
         return;
     }
 
+    postBuffer(task.taskId, slot, stream, fenceResult.value());
+
     stream.renderTotalNs += systemTime() - start;
     if (++stream.renderedFrames % kLogEveryFrames == 0) {
-        ALOGI("task %d: %d frames rendered, avg %.2f ms, %d empty, %zu layers last frame",
+        ALOGI("task %d: %d frames rendered, avg %.2f ms, %d empty, %d starved, %d post failures,"
+              " %zu layers last frame",
               task.taskId, stream.renderedFrames,
               stream.renderTotalNs / 1e6 / stream.renderedFrames, stream.emptyFrames,
-              args.layers.size());
+              stream.starvedFrames, stream.postFailures, args.layers.size());
     }
 
     if (dump) {
-        dumpStream(task.taskId, stream);
+        fenceResult.value()->waitForever(LOG_TAG);
+        dumpBuffer(task.taskId, texture->getBuffer());
     }
 }
 
-void WaydroidTaskStreams::dumpStream(int32_t taskId, const TaskStream& stream) {
-    if (!stream.texture) return;
-    const sp<GraphicBuffer>& buffer = stream.texture->getBuffer();
+void WaydroidTaskStreams::postBuffer(int32_t taskId, uint32_t slot, TaskStream& stream,
+                                     const sp<Fence>& fence) {
+    using ::android::hardware::hidl_handle;
+    using ::android::hardware::hidl_vec;
+    using ::android::hardware::graphics::composer::V2_1::Error;
+    using ::vendor::waydroid::display::V1_3::IWaydroidDisplay;
+
+    if (!mHal) {
+        mHal = IWaydroidDisplay::tryGetService();
+        if (!mHal) {
+            if (++mNoHalLogged % kLogEveryFrames == 1) {
+                ALOGW("display@1.3 HAL not up yet, dropping posts");
+            }
+            return;
+        }
+        ALOGI("connected to display@1.3");
+    }
+
+    const sp<GraphicBuffer>& buffer = stream.slots[slot].texture->getBuffer();
+    hidl_handle bufferHandle;
+    bufferHandle.setTo(const_cast<native_handle_t*>(buffer->handle), false /*shouldOwn*/);
+
+    hidl_handle fenceHandle;
+    if (fence && fence->isValid()) {
+        const int fd = fence->dup();
+        if (fd >= 0) {
+            native_handle_t* h = native_handle_create(1, 0);
+            h->data[0] = fd;
+            fenceHandle.setTo(h, true /*shouldOwn*/);
+        }
+    }
+
+    Error error = Error::NO_RESOURCES;
+    auto ret = mHal->postTaskBuffer(static_cast<uint32_t>(taskId), slot, bufferHandle,
+                                    buffer->getWidth(), buffer->getHeight(),
+                                    buffer->getStride(),
+                                    static_cast<int32_t>(buffer->getPixelFormat()), fenceHandle,
+                                    [&](Error e, const hidl_vec<uint32_t>& releasedSlots) {
+                                        error = e;
+                                        for (uint32_t released : releasedSlots) {
+                                            if (released < kSlotsPerTask) {
+                                                stream.slots[released].busy = false;
+                                            }
+                                        }
+                                    });
+    if (!ret.isOk()) {
+        ALOGW("display@1.3 died (%s), reconnecting", ret.description().c_str());
+        mHal = nullptr;
+        return;
+    }
+    if (error == Error::NONE) {
+        stream.slots[slot].busy = true;
+    } else {
+        // BAD_DISPLAY: task streams inactive HAL-side; BAD_LAYER: task not in
+        // the HAL's table (yet). Both retry naturally on the next frame.
+        if (++stream.postFailures % kLogEveryFrames == 1) {
+            ALOGW("task %d: post rejected (%d)", taskId, static_cast<int32_t>(error));
+        }
+    }
+}
+
+void WaydroidTaskStreams::dumpBuffer(int32_t taskId, const sp<GraphicBuffer>& buffer) {
+    if (!buffer) return;
 
     void* data = nullptr;
     if (buffer->lock(GRALLOC_USAGE_SW_READ_OFTEN, &data) != OK || data == nullptr) {
