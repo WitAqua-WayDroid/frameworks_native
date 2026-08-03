@@ -162,6 +162,7 @@
 #include "PowerAdvisor/Workload.h"
 #include "RegionSamplingThread.h"
 #include "RenderResourceCache.h"
+#include "WaydroidTaskStreams.h"
 #include "Scheduler/EventThread.h"
 #include "Scheduler/FrameTimeline.h"
 #include "Scheduler/LayerHistory.h"
@@ -3507,6 +3508,11 @@ CompositeResultsPerDisplay SurfaceFlinger::composite(
         offloadedCompositionFuture->wait();
         moveSnapshotsFromCompositionArgs(offloadedLayers);
     }
+
+    // Waydroid: feed per-task content streams now that snapshots are back.
+    if (mWaydroidTaskStreams) {
+        mWaydroidTaskStreams->onCompositionPresented(mLayerHierarchyBuilder.getHierarchy());
+    }
     mTimeStats->recordFrameDuration(pacesetterTarget.frameBeginTime().ns(), systemTime());
 
     // Send a power hint after presentation is finished.
@@ -5275,6 +5281,9 @@ void SurfaceFlinger::initScheduler(const sp<const DisplayDevice>& display) {
     mRegionSamplingThread =
             sp<RegionSamplingThread>::make(*this,
                                            RegionSamplingThread::EnvironmentTimingTunables());
+    if (WaydroidTaskStreams::enabledByProp()) {
+        mWaydroidTaskStreams = std::make_unique<WaydroidTaskStreams>(*this);
+    }
     mFpsReporter = sp<FpsReporter>::make(*mFrameTimeline);
 
     // Timer callbacks may fire, so do this last.
