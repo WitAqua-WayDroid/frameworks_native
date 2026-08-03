@@ -26,12 +26,15 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include "FrontEnd/LayerHierarchy.h"
+#include "FrontEnd/LayerSnapshot.h"
 #include "Layer.h"
+#include "LayerFE.h"
 #include "SurfaceFlinger.h"
 
 namespace android {
@@ -40,6 +43,24 @@ namespace {
 constexpr int kLogEveryFrames = 300;
 constexpr char kDumpProp[] = "waydroid.task_streams.dump";
 constexpr char kDumpDir[] = "/data/task_streams";
+// SF cannot tell a backgrounded task from a removed one (both just leave the
+// visible hierarchy), so streams are kept and only evicted beyond this cap.
+constexpr size_t kMaxStreams = 12;
+// All slots stuck busy this long means the HAL lost its slot state
+// (reconnect); reset our flags and let posts re-settle.
+constexpr int kStarvedResetFrames = 120;
+// Consecutive refused posts before we stop rendering a task, and for how long.
+constexpr int kRefusedThreshold = 3;
+constexpr uint64_t kRefusedBackoffFrames = 300;
+// A backgrounded task's card keeps the LAST posted frame, so never post
+// mid-animation frames: wait until the task's layer geometry is unchanged
+// between frames. The cap is a last resort for an app animating a window
+// transform forever — it must be far longer than any transition, because a
+// cap-forced post during a task switch is how zoomed mid-transition frames
+// ended up frozen into cards (the idle flush handles liveness otherwise).
+constexpr int kMaxUnstableFrames = 1200;
+// Idle flush passes before giving up on a task whose frames stay withheld.
+constexpr int kMaxFlushRetries = 40;
 } // namespace
 
 WaydroidTaskStreams::WaydroidTaskStreams(SurfaceFlinger& flinger) : mFlinger(flinger) {
@@ -117,52 +138,116 @@ void WaydroidTaskStreams::threadMain() NO_THREAD_SAFETY_ANALYSIS {
             std::vector<TaskCapture> tasks = std::move(mPending);
             mPending.clear();
             lock.unlock();
-            renderTasks(tasks);
+            const bool withheld = renderTasks(tasks);
             lock.lock();
+            mLastTasks = std::move(tasks);
+            mFlushPending = withheld;
+            mFlushRetries = 0;
+        }
+        if (mFlushPending) {
+            // A task's latest state did not reach its card (stability gate,
+            // or its snapshots came back empty mid-transition). If SF goes
+            // idle now (launch animation ended on a static screen), no
+            // present will ever deliver the settled frame — re-render until
+            // it posts, bounded so tasks that stay empty (backgrounded)
+            // don't spin forever.
+            if (!mCondition.wait_for(lock, std::chrono::milliseconds(150), [this]() REQUIRES(
+                                             mMutex) { return mFramePending || !mRunning; })) {
+                mFlushPending = false;
+                std::vector<TaskCapture> tasks = mLastTasks;
+                lock.unlock();
+                const bool withheld = renderTasks(tasks);
+                lock.lock();
+                mFlushPending = withheld && ++mFlushRetries < kMaxFlushRetries;
+            }
+            continue;
         }
         mCondition.wait(lock,
                         [this]() REQUIRES(mMutex) { return mFramePending || !mRunning; });
     }
 }
 
-void WaydroidTaskStreams::renderTasks(const std::vector<TaskCapture>& tasks) {
+bool WaydroidTaskStreams::renderTasks(const std::vector<TaskCapture>& tasks) {
     const bool dump = base::GetBoolProperty(std::string(kDumpProp), false);
 
-    // Drop streams of tasks that no longer exist.
-    for (auto it = mStreams.begin(); it != mStreams.end();) {
-        const int32_t taskId = it->first;
-        const bool alive = std::any_of(tasks.begin(), tasks.end(),
-                                       [taskId](const auto& t) { return t.taskId == taskId; });
-        if (!alive) {
-            ALOGI("task %d gone, dropping its stream", taskId);
-            it = mStreams.erase(it);
-        } else {
-            ++it;
+    mFrame++;
+
+    // A task absent from this frame is usually backgrounded, not gone. Its
+    // stream must survive: the compositor still displays one slot's buffer,
+    // and freeing that GraphicBuffer lets gralloc recycle the dmabuf under
+    // the card (wrong-app content). Free only slots the compositor released.
+    for (auto& [taskId, stream] : mStreams) {
+        const bool visible = std::any_of(tasks.begin(), tasks.end(),
+                                         [taskId = taskId](const auto& t) {
+                                             return t.taskId == taskId;
+                                         });
+        if (visible) {
+            stream.lastSeenFrame = mFrame;
+            continue;
+        }
+        for (auto& slot : stream.slots) {
+            if (!slot.busy && slot.texture) {
+                slot.texture = nullptr;
+            }
         }
     }
 
+    // Bound the map: evict the longest-absent stream (its card is most
+    // likely gone; if not, the card may show recycled content until refocus).
+    while (mStreams.size() > kMaxStreams) {
+        auto oldest = mStreams.end();
+        for (auto it = mStreams.begin(); it != mStreams.end(); ++it) {
+            if (it->second.lastSeenFrame == mFrame) continue;
+            if (oldest == mStreams.end() ||
+                it->second.lastSeenFrame < oldest->second.lastSeenFrame) {
+                oldest = it;
+            }
+        }
+        if (oldest == mStreams.end()) break;
+        ALOGI("task %d: evicting stream (absent %" PRIu64 " frames)", oldest->first,
+              mFrame - oldest->second.lastSeenFrame);
+        mStreams.erase(oldest);
+    }
+
+    bool withheld = false;
     for (const auto& task : tasks) {
-        renderTask(task, mStreams[task.taskId], dump);
+        withheld |= renderTask(task, mStreams[task.taskId], dump);
     }
 
     if (dump) {
         property_set(kDumpProp, "0");
     }
+    return withheld;
 }
 
-void WaydroidTaskStreams::renderTask(const TaskCapture& task, TaskStream& stream, bool dump) {
-    // Pick a slot the host compositor is not holding.
+bool WaydroidTaskStreams::renderTask(const TaskCapture& task, TaskStream& stream, bool dump) {
+    // Backing off after the HAL refused this task (launcher, system tasks).
+    if (mFrame < stream.skipUntilFrame) {
+        return false;
+    }
+
+    // Pick a slot the host compositor is not holding. Round-robin, so a slot
+    // the HAL keeps rejecting does not get hammered forever.
     uint32_t slot = kSlotsPerTask;
     for (uint32_t i = 0; i < kSlotsPerTask; i++) {
-        if (!stream.slots[i].busy) {
-            slot = i;
+        const uint32_t cand = (stream.nextSlot + i) % kSlotsPerTask;
+        if (!stream.slots[cand].busy) {
+            slot = cand;
             break;
         }
     }
     if (slot == kSlotsPerTask) {
         stream.starvedFrames++;
-        return;
+        if (++stream.consecutiveStarved >= kStarvedResetFrames) {
+            ALOGW("task %d: all slots busy for %d frames, resetting slot state", task.taskId,
+                  stream.consecutiveStarved);
+            for (auto& s : stream.slots) s.busy = false;
+            stream.consecutiveStarved = 0;
+        }
+        return false;
     }
+    stream.consecutiveStarved = 0;
+    stream.nextSlot = (slot + 1) % kSlotsPerTask;
 
     auto filterFn = [&task](const frontend::LayerSnapshot& snapshot,
                             bool& /*outStopTraversal*/) -> bool {
@@ -186,12 +271,47 @@ void WaydroidTaskStreams::renderTask(const TaskCapture& task, TaskStream& stream
     auto result = mFlinger.setScreenshotSnapshotsAndDisplayState(args, ui::PixelFormat::RGBA_8888);
     if (!result.ok()) {
         ALOGW("task %d: snapshot collection failed (%d)", task.taskId, result.error());
-        return;
+        return false;
     }
     if (args.layers.empty()) {
         stream.emptyFrames++;
-        return;
+        // A stream that has posted before may be empty only transiently
+        // (starting-window swap, transition churn) — worth a flush retry so
+        // a launch that ends on empty frames doesn't freeze mid-animation.
+        return stream.renderedFrames > 0;
     }
+
+    // Geometry signature: layer set + global transforms + alphas. During
+    // window transitions (launch, task switch, spread) these change every
+    // frame; freezing such a frame into the card is what produced gray and
+    // half-drawn cards. Post only frames whose geometry matches the previous
+    // frame's.
+    uint64_t sig = 14695981039346656037ull;
+    const auto mix = [&sig](uint64_t v) {
+        sig ^= v;
+        sig *= 1099511628211ull;
+    };
+    for (const auto& [layer, layerFE] : args.layers) {
+        const auto* snapshot = layerFE->mSnapshot.get();
+        if (!snapshot) continue;
+        mix(snapshot->path.id);
+        const ui::Transform& t = snapshot->geomLayerTransform;
+        for (const float f : {t.dsdx(), t.dtdx(), t.dtdy(), t.dsdy(), t.tx(), t.ty(),
+                              snapshot->alpha}) {
+            uint32_t bits;
+            memcpy(&bits, &f, sizeof(bits));
+            mix(bits);
+        }
+    }
+    const bool stable = stream.haveGeometrySig && sig == stream.geometrySig;
+    stream.geometrySig = sig;
+    stream.haveGeometrySig = true;
+    if (!stable && stream.consecutiveUnstable < kMaxUnstableFrames) {
+        stream.unstableFrames++;
+        stream.consecutiveUnstable++;
+        return true;
+    }
+    stream.consecutiveUnstable = 0;
 
     auto& texture = stream.slots[slot].texture;
     if (!texture ||
@@ -206,7 +326,7 @@ void WaydroidTaskStreams::renderTask(const TaskCapture& task, TaskStream& stream
         if (buffer->initCheck() != OK) {
             ALOGE("task %d: buffer allocation %dx%d failed (%d)", task.taskId,
                   args.size.getWidth(), args.size.getHeight(), buffer->initCheck());
-            return;
+            return false;
         }
         texture = std::make_shared<
                 renderengine::impl::ExternalTexture>(buffer, mFlinger.getRenderEngine(),
@@ -219,24 +339,26 @@ void WaydroidTaskStreams::renderTask(const TaskCapture& task, TaskStream& stream
     FenceResult fenceResult = mFlinger.captureScreenshot(args, texture, nullptr).get();
     if (!fenceResult.ok()) {
         ALOGW("task %d: render failed (%d)", task.taskId, fenceResult.error());
-        return;
+        return false;
     }
 
     postBuffer(task.taskId, slot, stream, fenceResult.value());
 
     stream.renderTotalNs += systemTime() - start;
     if (++stream.renderedFrames % kLogEveryFrames == 0) {
-        ALOGI("task %d: %d frames rendered, avg %.2f ms, %d empty, %d starved, %d post failures,"
-              " %zu layers last frame",
+        ALOGI("task %d: %d frames rendered, avg %.2f ms, %d empty, %d starved, %d unstable,"
+              " %d post failures, %zu layers last frame",
               task.taskId, stream.renderedFrames,
               stream.renderTotalNs / 1e6 / stream.renderedFrames, stream.emptyFrames,
-              stream.starvedFrames, stream.postFailures, args.layers.size());
+              stream.starvedFrames, stream.unstableFrames, stream.postFailures,
+              args.layers.size());
     }
 
     if (dump) {
         fenceResult.value()->waitForever(LOG_TAG);
         dumpBuffer(task.taskId, texture->getBuffer());
     }
+    return false;
 }
 
 void WaydroidTaskStreams::postBuffer(int32_t taskId, uint32_t slot, TaskStream& stream,
@@ -291,11 +413,21 @@ void WaydroidTaskStreams::postBuffer(int32_t taskId, uint32_t slot, TaskStream& 
     }
     if (error == Error::NONE) {
         stream.slots[slot].busy = true;
+        stream.consecutiveRefused = 0;
     } else {
-        // BAD_DISPLAY: task streams inactive HAL-side; BAD_LAYER: task not in
-        // the HAL's table (yet). Both retry naturally on the next frame.
         if (++stream.postFailures % kLogEveryFrames == 1) {
             ALOGW("task %d: post rejected (%d)", taskId, static_cast<int32_t>(error));
+        }
+        // BAD_DISPLAY: task streams inactive HAL-side; BAD_LAYER: task refused
+        // (blacklist/no identity) or not in the HAL's table yet. A task that
+        // keeps getting refused is not worth rendering every frame.
+        if (error == Error::BAD_LAYER || error == Error::BAD_DISPLAY) {
+            if (++stream.consecutiveRefused >= kRefusedThreshold) {
+                stream.skipUntilFrame = mFrame + kRefusedBackoffFrames;
+                stream.consecutiveRefused = 0;
+            }
+        } else {
+            stream.consecutiveRefused = 0;
         }
     }
 }
