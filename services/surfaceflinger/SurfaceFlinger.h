@@ -138,6 +138,7 @@ class Surface;
 class TimeStats;
 class FrameTracer;
 class ScreenCapturer;
+class WaydroidTaskStreams;
 class WindowInfosListenerInvoker;
 
 using ::aidl::android::hardware::drm::HdcpLevels;
@@ -375,6 +376,7 @@ private:
     friend class RefreshRateOverlay;
     friend class RegionSamplingThread;
     friend class SurfaceComposerAIDL;
+    friend class WaydroidTaskStreams;
 
     // For unit tests
     friend class TestableSurfaceFlinger;
@@ -1578,6 +1580,7 @@ private:
 
     bool mLumaSampling = true;
     sp<RegionSamplingThread> mRegionSamplingThread;
+    std::unique_ptr<WaydroidTaskStreams> mWaydroidTaskStreams;
     sp<FpsReporter> mFpsReporter;
     sp<TunnelModeEnabledReporter> mTunnelModeEnabledReporter;
     ui::DisplayPrimaries mInternalDisplayPrimaries;
