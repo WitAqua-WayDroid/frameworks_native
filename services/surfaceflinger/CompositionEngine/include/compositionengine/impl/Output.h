@@ -211,6 +211,12 @@ private:
     bool mWaydroidMultiWindows = base::GetBoolProperty(std::string("persist.waydroid.multi_windows"), false);
 };
 
+// Waydroid: set by the hwcomposer while it runs task-streams mode, where
+// every task is streamed to its own toplevel and the physical display's
+// composition output is shown nowhere. Read per frame; SF then skips the
+// physical display's GPU composition.
+bool waydroidTaskStreamsActive();
+
 // This template factory function standardizes the implementation details of the
 // final class using the types actually required by the implementation. This is
 // not possible to do in the base class as those types may not even be visible

@@ -513,6 +513,12 @@ void Display::finishFrame(GpuCompositionResult&& result) {
         return;
     }
 
+    // Waydroid: in task-streams mode every task is streamed to its own
+    // toplevel and this display's composition output is shown nowhere.
+    if (!isVirtual() && waydroidTaskStreamsActive()) {
+        return;
+    }
+
     impl::Output::finishFrame(std::move(result));
 }
 
