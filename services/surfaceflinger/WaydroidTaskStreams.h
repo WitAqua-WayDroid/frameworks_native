@@ -89,11 +89,19 @@ private:
         int postFailures = 0;
     };
 
+    // What the HAL answered to updateTaskList: Active means mWanted is
+    // authoritative, Inactive means task streams are off HAL-side (render
+    // nothing), Unavailable means no answer (render everything, the
+    // refused-post backoff still protects).
+    enum class Gate { Unavailable, Active, Inactive };
+
     void threadMain();
     // Both return true when a task's frame was withheld by the geometry
     // stability gate and a follow-up flush pass is needed.
     bool renderTasks(const std::vector<TaskCapture>& tasks);
     bool renderTask(const TaskCapture& task, TaskStream& stream, bool dump);
+    bool connectHal();
+    Gate queryWantedTasks(const std::vector<TaskCapture>& tasks);
     void postBuffer(int32_t taskId, uint32_t slot, TaskStream& stream, const sp<Fence>& fence);
     void dumpBuffer(int32_t taskId, const sp<GraphicBuffer>& buffer);
 
@@ -104,6 +112,8 @@ private:
     uint64_t mFrame = 0;
     sp<vendor::waydroid::display::V1_3::IWaydroidDisplay> mHal;
     int mNoHalLogged = 0;
+    std::unordered_set<int32_t> mWanted;
+    Gate mGate = Gate::Unavailable;
 
     std::mutex mMutex;
     std::condition_variable mCondition;
