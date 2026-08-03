@@ -61,9 +61,11 @@ private:
         std::unordered_set<uint32_t> layerIds;
     };
 
-    // Two buffers per task: one held by the host compositor, one to render
-    // into. Slot busy-ness follows the HAL's wl_buffer.release reports.
-    static constexpr uint32_t kSlotsPerTask = 2;
+    // Three buffers per task: Mir holds current + previous, and a release
+    // only arrives on the commit after that — with two slots no post ever
+    // finds a free one after the first pair. Slot busy-ness follows the
+    // HAL's wl_buffer.release reports.
+    static constexpr uint32_t kSlotsPerTask = 3;
 
     struct TaskStream {
         struct Slot {
@@ -71,16 +73,27 @@ private:
             bool busy = false;
         };
         Slot slots[kSlotsPerTask];
+        uint64_t lastSeenFrame = 0;
+        uint32_t nextSlot = 0;
+        int consecutiveStarved = 0;
+        int consecutiveRefused = 0;
+        uint64_t skipUntilFrame = 0;
+        uint64_t geometrySig = 0;
+        bool haveGeometrySig = false;
+        int consecutiveUnstable = 0;
         nsecs_t renderTotalNs = 0;
         int renderedFrames = 0;
         int emptyFrames = 0;
         int starvedFrames = 0;
+        int unstableFrames = 0;
         int postFailures = 0;
     };
 
     void threadMain();
-    void renderTasks(const std::vector<TaskCapture>& tasks);
-    void renderTask(const TaskCapture& task, TaskStream& stream, bool dump);
+    // Both return true when a task's frame was withheld by the geometry
+    // stability gate and a follow-up flush pass is needed.
+    bool renderTasks(const std::vector<TaskCapture>& tasks);
+    bool renderTask(const TaskCapture& task, TaskStream& stream, bool dump);
     void postBuffer(int32_t taskId, uint32_t slot, TaskStream& stream, const sp<Fence>& fence);
     void dumpBuffer(int32_t taskId, const sp<GraphicBuffer>& buffer);
 
@@ -88,12 +101,16 @@ private:
 
     // Render thread only.
     std::unordered_map<int32_t, TaskStream> mStreams;
+    uint64_t mFrame = 0;
     sp<vendor::waydroid::display::V1_3::IWaydroidDisplay> mHal;
     int mNoHalLogged = 0;
 
     std::mutex mMutex;
     std::condition_variable mCondition;
     std::vector<TaskCapture> mPending GUARDED_BY(mMutex);
+    std::vector<TaskCapture> mLastTasks GUARDED_BY(mMutex);
+    bool mFlushPending GUARDED_BY(mMutex) = false;
+    int mFlushRetries GUARDED_BY(mMutex) = 0;
     bool mFramePending GUARDED_BY(mMutex) = false;
     bool mRunning GUARDED_BY(mMutex) = true;
     std::thread mThread;
