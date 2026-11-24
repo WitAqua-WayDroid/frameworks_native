@@ -134,7 +134,7 @@ cc_library_shared {
         any @ flag_val: ["-DADDNL_GRALLOC_10_USAGE_BITS=" + flag_val],
         default: ["-DADDNL_GRALLOC_10_USAGE_BITS=0"],
     }) + select(soong_config_variable("libui", "legacy_gralloc"), {
-        true: ["-DLEGACY_GRALLOC"],
+        "true": ["-DLEGACY_GRALLOC"],
         default: [],
     }),
     cppflags: [
