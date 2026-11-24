@@ -159,7 +159,6 @@ public:
         static sp<BpBinder> create(sp<RpcSession>&& session, uint64_t address) {
             return BpBinder::create(std::move(session), address);
         }
-        }
 
         // valid if !isRpcBinder
         int32_t binderHandle() const { return mBinder->binderHandle(); }
